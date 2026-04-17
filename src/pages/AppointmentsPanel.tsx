@@ -68,7 +68,7 @@ export const AppointmentsPanel = () => {
       </div>
 
       <div className="card" style={{ marginBottom: '1rem' }}>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
           {['all', 'proposed', 'confirmed', 'completed', 'cancelled'].map(f => (
             <button key={f} className={`btn btn-sm ${filter === f ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setFilter(f)}>
               {f === 'all' ? 'Todos' : f === 'proposed' ? 'Pendentes' : f === 'confirmed' ? 'Confirmados' : f === 'completed' ? 'Concluídos' : 'Cancelados'}
@@ -83,6 +83,7 @@ export const AppointmentsPanel = () => {
             {loading ? 'Carregando...' : 'Nenhum agendamento encontrado.'}
           </p>
         ) : (
+          <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr><th>Cliente</th><th>Janela</th><th>Serviço</th><th>Endereço</th><th>Status</th><th>Criado em</th><th>Ações</th></tr>
@@ -119,6 +120,7 @@ export const AppointmentsPanel = () => {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

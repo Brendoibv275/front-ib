@@ -85,12 +85,12 @@ export const LeadsPanel = () => {
 
       {/* Filtros */}
       <div className="card" style={{ marginBottom: '1.5rem' }}>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
-          <div className="form-group" style={{ flex: 1 }}>
+        <div className="form-grid" style={{ alignItems: 'flex-end' }}>
+          <div className="form-group">
             <label><Search size={14} /> Buscar lead</label>
             <input placeholder="Nome, telefone ou ID WhatsApp" value={search} onChange={e => setSearch(e.target.value)} />
           </div>
-          <div className="form-group" style={{ width: '200px' }}>
+          <div className="form-group">
             <label>Estágio</label>
             <select value={filterStage} onChange={e => setFilterStage(e.target.value)}>
               <option value="all">Todos</option>
@@ -107,6 +107,7 @@ export const LeadsPanel = () => {
             {loading ? 'Carregando...' : 'Nenhum lead encontrado.'}
           </p>
         ) : (
+          <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr><th>Nome / WhatsApp</th><th>Serviço</th><th>Endereço</th><th>Estágio</th><th>Orçamento</th><th>Data</th><th></th></tr>
@@ -144,7 +145,7 @@ export const LeadsPanel = () => {
                   {expandedLead === lead.id && (
                     <tr key={`${lead.id}-detail`}>
                       <td colSpan={7} style={{ padding: '1.25rem', background: 'var(--bg-secondary)' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+                        <div className="form-grid" style={{ gap: '1.5rem' }}>
                           {/* Mensagens */}
                           <div>
                             <h5 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
@@ -198,6 +199,7 @@ export const LeadsPanel = () => {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

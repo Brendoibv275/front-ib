@@ -90,7 +90,7 @@ export const FinanceInput = () => {
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+      <div className="finance-grid-mobile" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
         {/* FORMULÁRIO */}
         <div className="card">
           {success && <div className="alert alert-success">{success}</div>}

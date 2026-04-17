@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
-import { LayoutDashboard, Wallet, Users, Bot, CalendarCheck, ShieldCheck, LogOut } from 'lucide-react';
+import { LayoutDashboard, Wallet, Users, Bot, CalendarCheck, ShieldCheck, LogOut, Menu, X } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { Dashboard } from './pages/Dashboard';
 import { FinanceInput } from './pages/FinanceInput';
@@ -34,50 +34,115 @@ const navSections = [
   }
 ];
 
+const bottomNavItems = [
+  { path: '/', label: 'Início', icon: <LayoutDashboard /> },
+  { path: '/finance', label: 'Lançar', icon: <Wallet /> },
+  { path: '/leads', label: 'Leads', icon: <Bot /> },
+  { path: '/appointments', label: 'Agenda', icon: <CalendarCheck /> },
+];
+
+// ─── SIDEBAR (Desktop) ───
 const Sidebar = ({ profile, onLogout }: { profile: UserProfile; onLogout: () => void }) => {
   const location = useLocation();
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">
-        <h1><span>Ilha</span> Breeze</h1>
-        <p>Painel Executivo</p>
-      </div>
-      {navSections.map(section => (
-        <div key={section.label}>
-          <div className="sidebar-label">{section.label}</div>
-          {section.items.map(item => (
-            <Link key={item.path} to={item.path} className={`nav-item ${location.pathname === item.path ? 'active' : ''}`}>
-              {item.icon} {item.label}
-            </Link>
-          ))}
-        </div>
-      ))}
-
-      {profile.role === 'admin' && (
-        <>
-          <div className="sidebar-label">Administração</div>
-          <Link to="/users" className={`nav-item ${location.pathname === '/users' ? 'active' : ''}`}>
-            <ShieldCheck size={18} /> Usuários
-          </Link>
-        </>
-      )}
-
-      <div style={{ marginTop: 'auto', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
-        <div style={{ padding: '0.5rem 0.75rem', marginBottom: '0.5rem' }}>
-          <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{profile.full_name}</div>
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{profile.email}</div>
-          <span className={`tag ${profile.role === 'admin' ? 'tag-new' : 'tag-completed'}`} style={{ marginTop: '4px' }}>
-            {profile.role === 'admin' ? 'Admin' : 'Operador'}
-          </span>
-        </div>
-        <button className="nav-item" onClick={onLogout} style={{ color: 'var(--danger)' }}>
-          <LogOut size={18} /> Sair
-        </button>
-      </div>
+      <SidebarContent profile={profile} onLogout={onLogout} location={location} />
     </aside>
   );
 };
 
+// ─── SIDEBAR CONTENT (Shared between Desktop & Mobile) ───
+const SidebarContent = ({ profile, onLogout, location, onNavigate }: {
+  profile: UserProfile; onLogout: () => void; location: { pathname: string }; onNavigate?: () => void;
+}) => (
+  <>
+    <div className="sidebar-brand">
+      <h1><span>Ilha</span> Breeze</h1>
+      <p>Painel Executivo</p>
+    </div>
+    {navSections.map(section => (
+      <div key={section.label}>
+        <div className="sidebar-label">{section.label}</div>
+        {section.items.map(item => (
+          <Link key={item.path} to={item.path} onClick={onNavigate}
+            className={`nav-item ${location.pathname === item.path ? 'active' : ''}`}>
+            {item.icon} {item.label}
+          </Link>
+        ))}
+      </div>
+    ))}
+
+    {profile.role === 'admin' && (
+      <>
+        <div className="sidebar-label">Administração</div>
+        <Link to="/users" onClick={onNavigate}
+          className={`nav-item ${location.pathname === '/users' ? 'active' : ''}`}>
+          <ShieldCheck size={18} /> Usuários
+        </Link>
+      </>
+    )}
+
+    <div style={{ marginTop: 'auto', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
+      <div style={{ padding: '0.5rem 0.75rem', marginBottom: '0.5rem' }}>
+        <div style={{ fontSize: '0.85rem', fontWeight: 600 }}>{profile.full_name}</div>
+        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>{profile.email}</div>
+        <span className={`tag ${profile.role === 'admin' ? 'tag-new' : 'tag-completed'}`} style={{ marginTop: '4px' }}>
+          {profile.role === 'admin' ? 'Admin' : 'Operador'}
+        </span>
+      </div>
+      <button className="nav-item" onClick={() => { onNavigate?.(); onLogout(); }} style={{ color: 'var(--danger)' }}>
+        <LogOut size={18} /> Sair
+      </button>
+    </div>
+  </>
+);
+
+// ─── MOBILE TOPBAR ───
+const MobileTopbar = ({ onMenuToggle }: { onMenuToggle: () => void }) => (
+  <div className="mobile-topbar">
+    <h1><span>Ilha</span> Breeze</h1>
+    <button className="hamburger" onClick={onMenuToggle}><Menu size={24} /></button>
+  </div>
+);
+
+// ─── MOBILE SIDEBAR OVERLAY ───
+const MobileSidebarOverlay = ({ open, onClose, profile, onLogout }: {
+  open: boolean; onClose: () => void; profile: UserProfile; onLogout: () => void;
+}) => {
+  const location = useLocation();
+  if (!open) return null;
+  return (
+    <>
+      <div className="sidebar-overlay open" onClick={onClose} />
+      <div className="sidebar-mobile">
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+          <button className="hamburger" onClick={onClose}><X size={22} /></button>
+        </div>
+        <SidebarContent profile={profile} onLogout={onLogout} location={location} onNavigate={onClose} />
+      </div>
+    </>
+  );
+};
+
+// ─── MOBILE BOTTOM NAV ───
+const BottomNav = () => {
+  const location = useLocation();
+  return (
+    <div className="bottom-nav">
+      <div className="bottom-nav-inner">
+        {bottomNavItems.map(item => (
+          <Link key={item.path} to={item.path}
+            className={`bottom-nav-item ${location.pathname === item.path ? 'active' : ''}`}>
+            {item.icon}
+            {item.label}
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ─── ROUTES ───
 function AppRoutes({ profile }: { profile: UserProfile }) {
   return (
     <Routes>
@@ -92,21 +157,21 @@ function AppRoutes({ profile }: { profile: UserProfile }) {
   );
 }
 
+// ─── MAIN APP ───
 function App() {
   const [session, setSession] = useState<any>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [authView, setAuthView] = useState<'login' | 'register'>('login');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    // Checar sessão atual
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session?.user) fetchProfile(session.user.id);
       else setLoading(false);
     });
 
-    // Escutar mudanças de auth
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       if (session?.user) {
@@ -125,7 +190,6 @@ function App() {
     if (data && data.approved) {
       setProfile(data);
     } else {
-      // Não aprovado: deslogar
       await supabase.auth.signOut();
       setProfile(null);
     }
@@ -143,16 +207,13 @@ function App() {
     return (
       <div className="auth-container">
         <div className="auth-card" style={{ textAlign: 'center' }}>
-          <div className="auth-brand">
-            <h1><span>Ilha</span> Breeze</h1>
-          </div>
+          <div className="auth-brand"><h1><span>Ilha</span> Breeze</h1></div>
           <p style={{ color: 'var(--text-secondary)' }}>Carregando...</p>
         </div>
       </div>
     );
   }
 
-  // Não logado → mostrar login ou registro
   if (!session || !profile) {
     if (authView === 'register') {
       return <RegisterPage onSwitch={() => setAuthView('login')} />;
@@ -160,13 +221,28 @@ function App() {
     return <LoginPage onSwitch={() => setAuthView('register')} />;
   }
 
-  // Logado e aprovado → app principal
   return (
     <Router>
+      {/* Desktop sidebar */}
       <Sidebar profile={profile} onLogout={handleLogout} />
+
+      {/* Mobile top bar */}
+      <MobileTopbar onMenuToggle={() => setMobileMenuOpen(true)} />
+
+      {/* Mobile sidebar overlay */}
+      <MobileSidebarOverlay
+        open={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        profile={profile}
+        onLogout={handleLogout}
+      />
+
       <main className="main">
         <AppRoutes profile={profile} />
       </main>
+
+      {/* Mobile bottom nav */}
+      <BottomNav />
     </Router>
   );
 }
