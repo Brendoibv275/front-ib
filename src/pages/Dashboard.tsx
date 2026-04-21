@@ -8,6 +8,7 @@ interface Metrics {
   grossRevenue: number;
   netRevenueAfterFees: number;
   totalIncomeFees: number;
+  totalCommissions: number;
   totalExpenses: number;
   adsCost: number;
   logisticsCost: number;
@@ -16,6 +17,7 @@ interface Metrics {
   taxExpenseCost: number;
   otherExpenseCost: number;
   netProfit: number;
+  commissionsWithoutMember: number;
   totalLeads: number;
   scheduledVisits: number;
   dailyTarget: number;
@@ -38,9 +40,9 @@ export const Dashboard = () => {
   const [memberFilter, setMemberFilter] = useState('all');
   const [memberPerformance, setMemberPerformance] = useState({ installations: 0, cleanings: 0, electrical: 0, repairs: 0, total: 0 });
   const [metrics, setMetrics] = useState<Metrics>({
-    grossRevenue: 0, netRevenueAfterFees: 0, totalIncomeFees: 0, totalExpenses: 0,
+    grossRevenue: 0, netRevenueAfterFees: 0, totalIncomeFees: 0, totalCommissions: 0, totalExpenses: 0,
     adsCost: 0, logisticsCost: 0, materialCost: 0, payrollCost: 0,
-    taxExpenseCost: 0, otherExpenseCost: 0, netProfit: 0,
+    taxExpenseCost: 0, otherExpenseCost: 0, netProfit: 0, commissionsWithoutMember: 0,
     totalLeads: 0, scheduledVisits: 0, dailyTarget: 600
   });
   const [chartData, setChartData] = useState<any[]>([]);
@@ -129,13 +131,15 @@ export const Dashboard = () => {
       let payroll = 0;
       let taxExp = 0;
       let totalExpAll = 0;
-      const dailyMap: Record<string, { revenueNet: number; expense: number }> = {};
+      let totalCommissions = 0;
+      let commissionsWithoutMember = 0;
+      const dailyMap: Record<string, { revenueNet: number; expense: number; commissions: number }> = {};
 
       entries.forEach((e: any) => {
         const val = Number(e.amount) || 0;
         const tax = Number(e.tax_fee) || 0;
         const day = new Date(e.created_at).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' });
-        if (!dailyMap[day]) dailyMap[day] = { revenueNet: 0, expense: 0 };
+        if (!dailyMap[day]) dailyMap[day] = { revenueNet: 0, expense: 0, commissions: 0 };
 
         if (e.entry_type === 'income') {
           gross += val;
@@ -143,6 +147,12 @@ export const Dashboard = () => {
           const netLine = getEntryNetAmount(e);
           netRev += netLine;
           dailyMap[day].revenueNet += netLine;
+          const comm = Number(e.metadata?.commission_total);
+          if (!Number.isNaN(comm) && comm > 0) {
+            totalCommissions += comm;
+            dailyMap[day].commissions += comm;
+            if (!e.team_member_id) commissionsWithoutMember += 1;
+          }
         } else {
           totalExpAll += val;
           dailyMap[day].expense += val;
@@ -156,13 +166,14 @@ export const Dashboard = () => {
 
       const bucketSum = ads + logistics + material + payroll + taxExp;
       const otherExp = Math.max(0, totalExpAll - bucketSum);
-      const net = netRev - totalExpAll;
+      const net = netRev - totalExpAll - totalCommissions;
       const scheduled = appts.filter((a: any) => a.status === 'proposed' || a.status === 'confirmed').length;
 
       setMetrics({
         grossRevenue: gross,
         netRevenueAfterFees: netRev,
         totalIncomeFees: incomeFees,
+        totalCommissions,
         totalExpenses: totalExpAll,
         adsCost: ads,
         logisticsCost: logistics,
@@ -171,6 +182,7 @@ export const Dashboard = () => {
         taxExpenseCost: taxExp,
         otherExpenseCost: otherExp,
         netProfit: net,
+        commissionsWithoutMember,
         totalLeads: leads.length,
         scheduledVisits: scheduled,
         dailyTarget: configuredTarget,
@@ -180,7 +192,7 @@ export const Dashboard = () => {
         name: day,
         Receita: vals.revenueNet,
         Despesa: vals.expense,
-        Lucro: vals.revenueNet - vals.expense,
+        Lucro: vals.revenueNet - vals.expense - vals.commissions,
       }));
       setChartData(chart.length > 0 ? chart : [
         { name: 'Sem dados', Receita: 0, Despesa: 0, Lucro: 0 }
@@ -200,7 +212,7 @@ export const Dashboard = () => {
       <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>
           <h2>Visão Executiva</h2>
-          <p>Lucro líquido após taxas de recebimento e todas as despesas do período</p>
+          <p>Lucro após taxas de recebimento, comissões de serviço e todas as despesas do período</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {(['today', 'week', 'month'] as const).map(p => (
@@ -248,6 +260,7 @@ export const Dashboard = () => {
           <div className="stat-sub" style={{ color: 'var(--text-secondary)' }}>
             Bruto R$ {metrics.grossRevenue.toFixed(2)}
             {metrics.totalIncomeFees > 0 ? ` · Taxas R$ ${metrics.totalIncomeFees.toFixed(2)}` : ''}
+            {metrics.totalCommissions > 0 ? ` · Comissões R$ ${metrics.totalCommissions.toFixed(2)}` : ''}
           </div>
         </div>
 
@@ -292,8 +305,17 @@ export const Dashboard = () => {
           <div className="stat-label">Impostos / Taxas (despesa)</div>
           <div className="stat-value sm text-danger">R$ {metrics.taxExpenseCost.toFixed(2)}</div>
         </div>
+        <div className="card stat-card">
+          <div className="stat-label">Comissões (custos de serviço)</div>
+          <div className="stat-value sm text-warning">R$ {metrics.totalCommissions.toFixed(2)}</div>
+          {metrics.commissionsWithoutMember > 0 && (
+            <div className="stat-sub" style={{ color: 'var(--warning)' }}>
+              {metrics.commissionsWithoutMember} lançamento(s) sem funcionário — edite em Lançamentos
+            </div>
+          )}
+        </div>
         <div className="card stat-card" style={{ borderLeft: '3px solid var(--accent)' }}>
-          <div className="stat-label">Lucro após impostos</div>
+          <div className="stat-label">Lucro após comissões e despesas</div>
           <div className={`stat-value sm ${metrics.netProfit >= 0 ? 'text-success' : 'text-danger'}`}>
             R$ {metrics.netProfit.toFixed(2)}
           </div>
@@ -327,7 +349,7 @@ export const Dashboard = () => {
 
       <div className="grid-2">
         <div className="card">
-          <h4 style={{ marginBottom: '1rem' }}>Desempenho por dia (receita líquida × despesa)</h4>
+          <h4 style={{ marginBottom: '1rem' }}>Desempenho por dia (lucro = receita líquida − despesas − comissões)</h4>
           <div className="chart-wrap">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
@@ -368,12 +390,21 @@ export const Dashboard = () => {
                   <td>R$ {metrics.taxExpenseCost.toFixed(2)}</td>
                 </tr>
                 <tr>
-                  <td><strong>Lucro após impostos</strong></td>
+                  <td>Comissões (registradas nos lançamentos)</td>
+                  <td>R$ {metrics.totalCommissions.toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td><strong>Lucro líquido real</strong></td>
                   <td><strong>R$ {metrics.netProfit.toFixed(2)}</strong></td>
                 </tr>
               </tbody>
             </table>
           </div>
+          {metrics.commissionsWithoutMember > 0 && (
+            <div className="alert alert-danger" style={{ marginBottom: '1rem' }}>
+              Existem comissões em receitas <strong>sem funcionário vinculado</strong>. Corrija em <strong>Lançamentos → Consultar e editar</strong> para o painel e a página Ganhos refletirem o responsável.
+            </div>
+          )}
           <div className="detail-row">
             <span className="detail-label">Receita bruta</span>
             <span className="detail-value text-success">+ R$ {metrics.grossRevenue.toFixed(2)}</span>
@@ -387,6 +418,10 @@ export const Dashboard = () => {
           <div className="detail-row" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '0.75rem', marginBottom: '0.35rem' }}>
             <span className="detail-label" style={{ fontWeight: 600 }}>Receita líquida</span>
             <span className="detail-value text-success">+ R$ {metrics.netRevenueAfterFees.toFixed(2)}</span>
+          </div>
+          <div className="detail-row">
+            <span className="detail-label">Comissões sobre serviços (custo da empresa)</span>
+            <span className="detail-value text-danger">- R$ {metrics.totalCommissions.toFixed(2)}</span>
           </div>
           <div className="detail-row">
             <span className="detail-label">Tráfego pago (Meta Ads)</span>

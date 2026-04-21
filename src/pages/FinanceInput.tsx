@@ -224,6 +224,11 @@ export const FinanceInput = () => {
       if (entryType === 'expense' && expenseRecurrence === 'specific_date' && !specificDueDate) {
         throw new Error('Informe a data específica da despesa.');
       }
+      if (entryType === 'income' && totalCommission >= 0.01 && !teamMemberId?.trim()) {
+        throw new Error(
+          'Receitas com comissão precisam ter um funcionário vinculado. Selecione o profissional responsável.'
+        );
+      }
 
       const payload = buildPayload();
 
