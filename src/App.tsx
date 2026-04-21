@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
-import { LayoutDashboard, Wallet, Users, Bot, CalendarCheck, ShieldCheck, LogOut, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Wallet, Users, Bot, CalendarCheck, ShieldCheck, LogOut, Menu, X, CircleDollarSign } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { Dashboard } from './pages/Dashboard';
 import { FinanceInput } from './pages/FinanceInput';
@@ -8,6 +8,7 @@ import { TeamConfig } from './pages/TeamConfig';
 import { LeadsPanel } from './pages/LeadsPanel';
 import { AppointmentsPanel } from './pages/AppointmentsPanel';
 import { UserManagement } from './pages/UserManagement';
+import { EmployeeEarnings } from './pages/EmployeeEarnings';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import './index.css';
@@ -22,6 +23,7 @@ const navSections = [
     items: [
       { path: '/', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
       { path: '/finance', label: 'Lançamentos', icon: <Wallet size={18} /> },
+      { path: '/earnings', label: 'Ganhos da equipe', icon: <CircleDollarSign size={18} /> },
     ]
   },
   {
@@ -37,6 +39,7 @@ const navSections = [
 const bottomNavItems = [
   { path: '/', label: 'Início', icon: <LayoutDashboard /> },
   { path: '/finance', label: 'Lançar', icon: <Wallet /> },
+  { path: '/earnings', label: 'Ganhos', icon: <CircleDollarSign /> },
   { path: '/leads', label: 'Leads', icon: <Bot /> },
   { path: '/appointments', label: 'Agenda', icon: <CalendarCheck /> },
 ];
@@ -148,6 +151,7 @@ function AppRoutes({ profile }: { profile: UserProfile }) {
     <Routes>
       <Route path="/" element={<Dashboard />} />
       <Route path="/finance" element={<FinanceInput />} />
+      <Route path="/earnings" element={<EmployeeEarnings />} />
       <Route path="/team" element={<TeamConfig />} />
       <Route path="/leads" element={<LeadsPanel />} />
       <Route path="/appointments" element={<AppointmentsPanel />} />

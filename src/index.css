@@ -266,7 +266,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
   .mobile-topbar { display: flex; }
   .bottom-nav { display: block; }
 
-  .main { padding-bottom: 4.5rem; } /* Space for bottom nav */
+  .main { padding-bottom: 4.75rem; } /* Space for bottom nav (5 items) */
+
+  .bottom-nav-inner { max-width: 100%; padding: 0 0.1rem; }
+  .bottom-nav-item { padding: 0.2rem 0.3rem; font-size: 0.58rem; }
+  .bottom-nav-item svg { width: 20px; height: 20px; }
 
   .page { padding: 1.25rem 1rem; }
   .page-header { margin-bottom: 1.25rem; }

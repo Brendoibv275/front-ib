@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { ArrowUpCircle, ArrowDownCircle, Save } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { ArrowUpCircle, ArrowDownCircle, Save, Pencil, Trash2, X, List, PlusCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getFinanceCategoryLabel, getEntryNetAmount } from '../lib/financeLabels';
 
@@ -11,15 +11,18 @@ interface ServiceItem {
   commission_value: number;
 }
 type ExpenseRecurrence = 'one_time' | 'daily' | 'weekly' | 'monthly' | 'annual' | 'specific_date';
+type MainTab = 'new' | 'list';
 
 export const FinanceInput = () => {
+  const [mainTab, setMainTab] = useState<MainTab>('new');
   const [entryType, setEntryType] = useState<'income' | 'expense'>('income');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
-  const [recentEntries, setRecentEntries] = useState<any[]>([]);
+  const [entries, setEntries] = useState<any[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('service_revenue');
@@ -34,14 +37,24 @@ export const FinanceInput = () => {
   const [expenseRecurrence, setExpenseRecurrence] = useState<ExpenseRecurrence>('one_time');
   const [specificDueDate, setSpecificDueDate] = useState('');
 
+  const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
+  const [filterCategory, setFilterCategory] = useState('');
+  const [filterMemberId, setFilterMemberId] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
+  const [filterSearch, setFilterSearch] = useState('');
+
   useEffect(() => {
     fetchTeam();
     fetchServices();
-    fetchRecent();
   }, []);
 
+  useEffect(() => {
+    fetchEntries();
+  }, [filterType, filterCategory, filterMemberId, filterDateFrom, filterDateTo]);
+
   const fetchTeam = async () => {
-    const { data } = await supabase.from('team_members').select('id, name, role').eq('active', true);
+    const { data } = await supabase.from('team_members').select('id, name, role').eq('active', true).order('name');
     if (data) setTeam(data);
   };
 
@@ -50,20 +63,31 @@ export const FinanceInput = () => {
     if (data) setServices(data as ServiceItem[]);
   };
 
-  const fetchRecent = async () => {
-    const { data } = await supabase
+  const fetchEntries = async () => {
+    let q = supabase
       .from('finance_entries')
-      .select('id, entry_type, category, amount, tax_fee, net_amount, created_at, description, due_date, metadata')
+      .select('id, entry_type, category, amount, tax_fee, net_amount, created_at, description, due_date, metadata, team_member_id')
       .order('created_at', { ascending: false })
-      .limit(15);
-    if (data) setRecentEntries(data);
+      .limit(300);
+
+    if (filterType !== 'all') q = q.eq('entry_type', filterType);
+    if (filterCategory) q = q.eq('category', filterCategory);
+    if (filterMemberId) q = q.eq('team_member_id', filterMemberId);
+    if (filterDateFrom) q = q.gte('created_at', new Date(`${filterDateFrom}T00:00:00`).toISOString());
+    if (filterDateTo) q = q.lte('created_at', new Date(`${filterDateTo}T23:59:59`).toISOString());
+
+    const { data } = await q;
+    if (data) setEntries(data);
   };
+
+  const teamById = useMemo(() => Object.fromEntries(team.map(t => [t.id, t])), [team]);
 
   const roleLabel = (role: string) => {
     if (role === 'technician') return 'Técnico';
     if (role === 'servant') return 'Servente';
     return 'Auxiliar';
   };
+
   const recurrenceLabel = (value?: string) => {
     if (!value || value === 'one_time') return 'Única';
     if (value === 'daily') return 'Diária';
@@ -85,6 +109,111 @@ export const FinanceInput = () => {
   const computedOvertime = Number(overtimeHours || 0) * Number(overtimeRate || 0);
   const totalCommission = computedServiceCommission + computedNight + computedOvertime;
 
+  const selectedMember = teamMemberId ? teamById[teamMemberId] : null;
+
+  const filteredRows = useMemo(() => {
+    const q = filterSearch.trim().toLowerCase();
+    if (!q) return entries;
+    return entries.filter((e: any) => {
+      const cat = getFinanceCategoryLabel(e.category).toLowerCase();
+      const desc = (e.description || '').toLowerCase();
+      return cat.includes(q) || desc.includes(q) || String(e.amount).includes(q);
+    });
+  }, [entries, filterSearch]);
+
+  const clearForm = () => {
+    setEditingId(null);
+    setAmount('');
+    setDescription('');
+    setTeamMemberId('');
+    setTaxFee('');
+    setServiceId('');
+    setNightHours('');
+    setNightRate('');
+    setOvertimeHours('');
+    setOvertimeRate('');
+    setExpenseRecurrence('one_time');
+    setSpecificDueDate('');
+  };
+
+  const loadEntryForEdit = (row: any) => {
+    setMainTab('new');
+    setEditingId(row.id);
+    setEntryType(row.entry_type);
+    setCategory(row.category || (row.entry_type === 'income' ? 'service_revenue' : 'material_cost'));
+    setAmount(String(row.amount ?? ''));
+    setDescription(row.description || '');
+    setTeamMemberId(row.team_member_id || '');
+    setTaxFee(row.tax_fee != null ? String(row.tax_fee) : '');
+    const md = row.metadata || {};
+    setServiceId(md.service_id || '');
+    setNightHours(md.commission_night_hours != null ? String(md.commission_night_hours) : '');
+    setNightRate(md.commission_night_rate != null ? String(md.commission_night_rate) : '');
+    setOvertimeHours(md.commission_overtime_hours != null ? String(md.commission_overtime_hours) : '');
+    setOvertimeRate(md.commission_overtime_rate != null ? String(md.commission_overtime_rate) : '');
+    setExpenseRecurrence((md.recurrence as ExpenseRecurrence) || 'one_time');
+    setSpecificDueDate(md.specific_due_date || row.due_date || '');
+    setSuccess('');
+    setError('');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const buildPayload = () => {
+    const insertData: any = {
+      entry_type: entryType,
+      category,
+      amount: parseFloat(amount),
+      description: description || null,
+      status: 'paid',
+      metadata: {} as Record<string, unknown>,
+    };
+    insertData.team_member_id = teamMemberId || null;
+    insertData.tax_fee = taxFee ? parseFloat(taxFee) : 0;
+
+    if (entryType === 'income' && selectedService) {
+      insertData.metadata = {
+        service_id: selectedService.id,
+        service_name: selectedService.name,
+        commission_type: selectedService.commission_type,
+        commission_value: selectedService.commission_value,
+        commission_service_amount: Number(computedServiceCommission.toFixed(2)),
+        commission_night_hours: Number(nightHours || 0),
+        commission_night_rate: Number(nightRate || 0),
+        commission_night_amount: Number(computedNight.toFixed(2)),
+        commission_overtime_hours: Number(overtimeHours || 0),
+        commission_overtime_rate: Number(overtimeRate || 0),
+        commission_overtime_amount: Number(computedOvertime.toFixed(2)),
+        commission_total: Number(totalCommission.toFixed(2)),
+      };
+    } else if (entryType === 'income') {
+      insertData.metadata = {
+        commission_night_hours: Number(nightHours || 0),
+        commission_night_rate: Number(nightRate || 0),
+        commission_night_amount: Number(computedNight.toFixed(2)),
+        commission_overtime_hours: Number(overtimeHours || 0),
+        commission_overtime_rate: Number(overtimeRate || 0),
+        commission_overtime_amount: Number(computedOvertime.toFixed(2)),
+        commission_service_amount: 0,
+        commission_total: Number((computedNight + computedOvertime).toFixed(2)),
+      };
+    }
+
+    if (entryType === 'expense') {
+      const recurrenceMetadata: Record<string, unknown> = { recurrence: expenseRecurrence };
+      if (expenseRecurrence === 'specific_date' && specificDueDate) {
+        insertData.due_date = specificDueDate;
+        recurrenceMetadata.specific_due_date = specificDueDate;
+      } else {
+        insertData.due_date = null;
+      }
+      insertData.metadata = { ...insertData.metadata, ...recurrenceMetadata };
+    } else {
+      insertData.due_date = null;
+    }
+
+    return insertData;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -92,59 +221,25 @@ export const FinanceInput = () => {
     setError('');
 
     try {
-      const insertData: any = {
-        entry_type: entryType,
-        category,
-        amount: parseFloat(amount),
-        description: description || null,
-        status: 'paid',
-        metadata: {}
-      };
-      if (teamMemberId) insertData.team_member_id = teamMemberId;
-      if (taxFee) insertData.tax_fee = parseFloat(taxFee);
-      if (selectedService) {
-        insertData.metadata = {
-          service_id: selectedService.id,
-          service_name: selectedService.name,
-          commission_type: selectedService.commission_type,
-          commission_value: selectedService.commission_value,
-          commission_service_amount: Number(computedServiceCommission.toFixed(2)),
-          commission_night_hours: Number(nightHours || 0),
-          commission_night_rate: Number(nightRate || 0),
-          commission_night_amount: Number(computedNight.toFixed(2)),
-          commission_overtime_hours: Number(overtimeHours || 0),
-          commission_overtime_rate: Number(overtimeRate || 0),
-          commission_overtime_amount: Number(computedOvertime.toFixed(2)),
-          commission_total: Number(totalCommission.toFixed(2)),
-        };
-      }
-      if (entryType === 'expense') {
-        const recurrenceMetadata: Record<string, unknown> = {
-          recurrence: expenseRecurrence,
-        };
-        if (expenseRecurrence === 'specific_date' && specificDueDate) {
-          insertData.due_date = specificDueDate;
-          recurrenceMetadata.specific_due_date = specificDueDate;
-        }
-        insertData.metadata = { ...insertData.metadata, ...recurrenceMetadata };
+      if (entryType === 'expense' && expenseRecurrence === 'specific_date' && !specificDueDate) {
+        throw new Error('Informe a data específica da despesa.');
       }
 
-      const { error: err } = await supabase.from('finance_entries').insert(insertData);
-      if (err) throw err;
+      const payload = buildPayload();
 
-      setSuccess(entryType === 'income' ? 'Receita registrada com sucesso.' : 'Despesa registrada com sucesso.');
-      setAmount('');
-      setDescription('');
-      setTeamMemberId('');
-      setTaxFee('');
-      setServiceId('');
-      setNightHours('');
-      setNightRate('');
-      setOvertimeHours('');
-      setOvertimeRate('');
-      setExpenseRecurrence('one_time');
-      setSpecificDueDate('');
-      fetchRecent();
+      if (editingId) {
+        const { error: err } = await supabase.from('finance_entries').update(payload).eq('id', editingId);
+        if (err) throw err;
+        setSuccess('Lançamento atualizado com sucesso.');
+      } else {
+        const { error: err } = await supabase.from('finance_entries').insert(payload);
+        if (err) throw err;
+        setSuccess(entryType === 'income' ? 'Receita registrada com sucesso.' : 'Despesa registrada com sucesso.');
+      }
+
+      clearForm();
+      setCategory(entryType === 'income' ? 'service_revenue' : 'material_cost');
+      fetchEntries();
     } catch (err: any) {
       setError('Erro: ' + err.message);
     } finally {
@@ -152,204 +247,340 @@ export const FinanceInput = () => {
     }
   };
 
+  const handleDelete = async (id: string) => {
+    if (!confirm('Excluir este lançamento? Esta ação não pode ser desfeita.')) return;
+    setError('');
+    const { error: err } = await supabase.from('finance_entries').delete().eq('id', id);
+    if (err) {
+      setError(err.message);
+      return;
+    }
+    if (editingId === id) clearForm();
+    setSuccess('Lançamento excluído.');
+    fetchEntries();
+  };
+
   return (
     <div className="page">
       <div className="page-header">
-        <h2>Lançamentos Diários</h2>
-        <p>Insira receitas e despesas com comissionamento detalhado por serviço</p>
+        <h2>Financeiro — Lançamentos</h2>
+        <p>Novo lançamento, consulta com filtros, edição e exclusão. Comissão aparece em tempo real ao vincular funcionário e serviço.</p>
       </div>
 
-      <div className="toggle-tabs">
+      <div className="toggle-tabs" style={{ marginBottom: '1.25rem' }}>
         <div
-          className={`toggle-tab ${entryType === 'income' ? 'active-income' : ''}`}
-          onClick={() => { setEntryType('income'); setCategory('service_revenue'); }}
+          className={`toggle-tab ${mainTab === 'new' ? 'active-income' : ''}`}
+          onClick={() => { setMainTab('new'); setError(''); setSuccess(''); }}
+          style={{ borderColor: mainTab === 'new' ? 'var(--success)' : undefined }}
         >
-          <ArrowUpCircle size={18} /> Receita (Serviço)
+          <PlusCircle size={18} /> Novo lançamento
         </div>
         <div
-          className={`toggle-tab ${entryType === 'expense' ? 'active-expense' : ''}`}
-          onClick={() => { setEntryType('expense'); setCategory('material_cost'); }}
+          className={`toggle-tab ${mainTab === 'list' ? 'active-expense' : ''}`}
+          onClick={() => { setMainTab('list'); setError(''); setSuccess(''); fetchEntries(); }}
+          style={{ borderColor: mainTab === 'list' ? 'var(--danger)' : undefined }}
         >
-          <ArrowDownCircle size={18} /> Despesa (Custo)
+          <List size={18} /> Consultar e editar
         </div>
       </div>
 
-      <div className="finance-grid-mobile" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-        <div className="card">
-          {success && <div className="alert alert-success">{success}</div>}
-          {error && <div className="alert alert-danger">{error}</div>}
-
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            <div className="form-group">
-              <label>{entryType === 'income' ? 'Tipo de Serviço' : 'Categoria de Custo'}</label>
-              {entryType === 'income' ? (
-                <select value={category} onChange={e => setCategory(e.target.value)}>
-                  <option value="service_revenue">Instalação Padrão</option>
-                  <option value="service_electrical">Elétrica</option>
-                  <option value="service_cleaning">Limpeza</option>
-                  <option value="service_uninstall">Desinstalação</option>
-                </select>
-              ) : (
-                <select value={category} onChange={e => setCategory(e.target.value)}>
-                  <option value="material_cost">Compra de Material</option>
-                  <option value="logistics_lunch">Almoço</option>
-                  <option value="logistics_transport">Passagem</option>
-                  <option value="logistics_fuel">Combustível</option>
-                  <option value="marketing_ads">Tráfego Pago</option>
-                  <option value="fixed_payroll">Folha de Pagamento</option>
-                  <option value="tax">Imposto / Taxa</option>
-                </select>
-              )}
+      {mainTab === 'new' && (
+        <>
+          <div className="toggle-tabs">
+            <div
+              className={`toggle-tab ${entryType === 'income' ? 'active-income' : ''}`}
+              onClick={() => { setEntryType('income'); setCategory('service_revenue'); }}
+            >
+              <ArrowUpCircle size={18} /> Receita
             </div>
+            <div
+              className={`toggle-tab ${entryType === 'expense' ? 'active-expense' : ''}`}
+              onClick={() => { setEntryType('expense'); setCategory('material_cost'); }}
+            >
+              <ArrowDownCircle size={18} /> Despesa
+            </div>
+          </div>
 
-            {entryType === 'income' && (
-              <div className="form-group">
-                <label>Serviço para comissão (opcional)</label>
-                <select value={serviceId} onChange={e => setServiceId(e.target.value)}>
-                  <option value="">— Nenhum —</option>
-                  {services.map(service => (
-                    <option key={service.id} value={service.id}>
-                      {service.name} ({service.commission_type === 'percentage' ? `${service.commission_value}%` : `R$ ${Number(service.commission_value).toFixed(2)}`})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {entryType === 'expense' && (
-              <div className="card" style={{ padding: '1rem' }}>
-                <h4 style={{ marginBottom: '0.75rem' }}>Periodicidade da Despesa</h4>
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label>Tipo</label>
-                    <select value={expenseRecurrence} onChange={e => setExpenseRecurrence(e.target.value as ExpenseRecurrence)}>
-                      <option value="one_time">Única</option>
-                      <option value="daily">Diária</option>
-                      <option value="weekly">Semanal</option>
-                      <option value="monthly">Mensal</option>
-                      <option value="annual">Anual</option>
-                      <option value="specific_date">Data específica</option>
+          {editingId && (
+            <div className="alert alert-success" style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
+              <span>Editando lançamento <strong>{editingId.slice(0, 8)}…</strong></span>
+              <button type="button" className="btn btn-sm btn-secondary" onClick={() => { clearForm(); setSuccess(''); setError(''); }}>
+                <X size={14} /> Cancelar edição
+              </button>
+            </div>
+          )}
+
+          <div className="finance-grid-mobile" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+            <div className="card">
+              {success && <div className="alert alert-success">{success}</div>}
+              {error && <div className="alert alert-danger">{error}</div>}
+
+              <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div className="form-group">
+                  <label>{entryType === 'income' ? 'Tipo de serviço' : 'Categoria de custo'}</label>
+                  {entryType === 'income' ? (
+                    <select value={category} onChange={e => setCategory(e.target.value)}>
+                      <option value="service_revenue">Instalação padrão</option>
+                      <option value="service_electrical">Elétrica</option>
+                      <option value="service_cleaning">Limpeza</option>
+                      <option value="service_uninstall">Desinstalação</option>
                     </select>
-                  </div>
-                  {expenseRecurrence === 'specific_date' && (
-                    <div className="form-group">
-                      <label>Data específica</label>
-                      <input type="date" value={specificDueDate} onChange={e => setSpecificDueDate(e.target.value)} required />
-                    </div>
+                  ) : (
+                    <select value={category} onChange={e => setCategory(e.target.value)}>
+                      <option value="material_cost">Compra de material</option>
+                      <option value="logistics_lunch">Almoço</option>
+                      <option value="logistics_transport">Passagem</option>
+                      <option value="logistics_fuel">Combustível</option>
+                      <option value="marketing_ads">Tráfego pago</option>
+                      <option value="fixed_payroll">Folha de pagamento</option>
+                      <option value="tax">Imposto / taxa</option>
+                    </select>
                   )}
                 </div>
-              </div>
-            )}
 
-            <div className="form-grid">
-              <div className="form-group">
-                <label>Valor (R$)</label>
-                <input type="number" step="0.01" min="0.01" placeholder="Ex: 150.00" value={amount} onChange={e => setAmount(e.target.value)} required />
-              </div>
-              <div className="form-group">
-                <label>Taxa PagBank (R$) — opcional</label>
-                <input type="number" step="0.01" min="0" placeholder="Ex: 4.50" value={taxFee} onChange={e => setTaxFee(e.target.value)} />
-              </div>
+                <div className="form-grid">
+                  <div className="form-group">
+                    <label>Valor (R$)</label>
+                    <input type="number" step="0.01" min="0.01" value={amount} onChange={e => setAmount(e.target.value)} required />
+                  </div>
+                  <div className="form-group">
+                    <label>Taxa gateway (R$) — opcional</label>
+                    <input type="number" step="0.01" min="0" value={taxFee} onChange={e => setTaxFee(e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label>Funcionário responsável (comissão / responsável)</label>
+                  <select value={teamMemberId} onChange={e => setTeamMemberId(e.target.value)}>
+                    <option value="">— Nenhum —</option>
+                    {team.map(t => (
+                      <option key={t.id} value={t.id}>{t.name} ({roleLabel(t.role)})</option>
+                    ))}
+                  </select>
+                </div>
+
+                {entryType === 'income' && (
+                  <div className="form-group">
+                    <label>Serviço do catálogo (comissão)</label>
+                    <select value={serviceId} onChange={e => setServiceId(e.target.value)}>
+                      <option value="">— Sem comissão por serviço —</option>
+                      {services.map(service => (
+                        <option key={service.id} value={service.id}>
+                          {service.name} ({service.commission_type === 'percentage' ? `${service.commission_value}%` : `R$ ${Number(service.commission_value).toFixed(2)}`})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {entryType === 'income' && selectedMember && (
+                  <div className="card" style={{ padding: '1rem', borderLeft: '3px solid var(--accent)' }}>
+                    <h4 style={{ marginBottom: '0.5rem' }}>Prévia de ganhos — {selectedMember.name}</h4>
+                    {!serviceId ? (
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
+                        Escolha um <strong>serviço do catálogo</strong> para calcular a comissão sobre o valor. Adicione noturno/hora extra abaixo se aplicável.
+                      </p>
+                    ) : (
+                      <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+                        Serviço: <strong>{selectedService?.name}</strong> · Valor bruto R$ {grossAmount.toFixed(2)}
+                      </p>
+                    )}
+                    <div style={{ fontSize: '0.88rem', lineHeight: 1.7 }}>
+                      <div>Comissão do serviço: <strong>R$ {computedServiceCommission.toFixed(2)}</strong></div>
+                      <div>Adicional noturno: <strong>R$ {computedNight.toFixed(2)}</strong></div>
+                      <div>Hora extra: <strong>R$ {computedOvertime.toFixed(2)}</strong></div>
+                      <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid var(--border)', fontWeight: 700, fontSize: '1rem' }}>
+                        Total estimado ao salvar: <span className="text-success">R$ {totalCommission.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {entryType === 'income' && (
+                  <div className="card" style={{ padding: '1rem' }}>
+                    <h4 style={{ marginBottom: '0.75rem' }}>Noturno e hora extra</h4>
+                    <div className="form-grid">
+                      <div className="form-group">
+                        <label>Horas noturnas</label>
+                        <input type="number" min="0" value={nightHours} onChange={e => setNightHours(e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label>R$/hora noturna</label>
+                        <input type="number" min="0" value={nightRate} onChange={e => setNightRate(e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label>Horas extras</label>
+                        <input type="number" min="0" value={overtimeHours} onChange={e => setOvertimeHours(e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label>R$/hora extra</label>
+                        <input type="number" min="0" value={overtimeRate} onChange={e => setOvertimeRate(e.target.value)} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {entryType === 'expense' && (
+                  <div className="card" style={{ padding: '1rem' }}>
+                    <h4 style={{ marginBottom: '0.75rem' }}>Periodicidade</h4>
+                    <div className="form-grid">
+                      <div className="form-group">
+                        <label>Tipo</label>
+                        <select value={expenseRecurrence} onChange={e => setExpenseRecurrence(e.target.value as ExpenseRecurrence)}>
+                          <option value="one_time">Única</option>
+                          <option value="daily">Diária</option>
+                          <option value="weekly">Semanal</option>
+                          <option value="monthly">Mensal</option>
+                          <option value="annual">Anual</option>
+                          <option value="specific_date">Data específica</option>
+                        </select>
+                      </div>
+                      {expenseRecurrence === 'specific_date' && (
+                        <div className="form-group">
+                          <label>Data</label>
+                          <input type="date" value={specificDueDate} onChange={e => setSpecificDueDate(e.target.value)} required />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="form-group">
+                  <label>Descrição</label>
+                  <textarea rows={3} value={description} onChange={e => setDescription(e.target.value)} />
+                </div>
+
+                <button type="submit" className={`btn btn-block ${entryType === 'income' ? 'btn-success' : 'btn-danger'}`} disabled={loading}>
+                  <Save size={18} /> {loading ? 'Salvando...' : editingId ? 'Atualizar lançamento' : entryType === 'income' ? 'Registrar receita' : 'Registrar despesa'}
+                </button>
+              </form>
             </div>
 
+            <div className="card">
+              <h4 style={{ marginBottom: '0.75rem' }}>Dicas</h4>
+              <ul style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', paddingLeft: '1.1rem', lineHeight: 1.6 }}>
+                <li>Use <strong>Consultar e editar</strong> para filtrar e alterar lançamentos antigos.</li>
+                <li>Para comissão completa: preencha <strong>valor</strong>, <strong>funcionário</strong> e <strong>serviço do catálogo</strong>.</li>
+                <li>Taxas do meio de pagamento reduzem o líquido no painel, mas a comissão usa o valor bruto informado.</li>
+              </ul>
+            </div>
+          </div>
+        </>
+      )}
+
+      {mainTab === 'list' && (
+        <div className="card">
+          <h4 style={{ marginBottom: '1rem' }}>Filtros</h4>
+          <div className="form-grid" style={{ marginBottom: '1rem' }}>
             <div className="form-group">
-              <label>Técnico / Funcionário responsável</label>
-              <select value={teamMemberId} onChange={e => setTeamMemberId(e.target.value)}>
-                <option value="">— Nenhum —</option>
+              <label>Tipo</label>
+              <select value={filterType} onChange={e => setFilterType(e.target.value as 'all' | 'income' | 'expense')}>
+                <option value="all">Todos</option>
+                <option value="income">Receitas</option>
+                <option value="expense">Despesas</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Categoria</label>
+              <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
+                <option value="">Todas</option>
+                <option value="service_revenue">Instalação padrão</option>
+                <option value="service_electrical">Elétrica</option>
+                <option value="service_cleaning">Limpeza</option>
+                <option value="service_uninstall">Desinstalação</option>
+                <option value="material_cost">Material</option>
+                <option value="logistics_lunch">Almoço</option>
+                <option value="logistics_transport">Passagem</option>
+                <option value="logistics_fuel">Combustível</option>
+                <option value="marketing_ads">Tráfego</option>
+                <option value="fixed_payroll">Folha</option>
+                <option value="tax">Imposto</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Funcionário</label>
+              <select value={filterMemberId} onChange={e => setFilterMemberId(e.target.value)}>
+                <option value="">Todos</option>
                 {team.map(t => (
-                  <option key={t.id} value={t.id}>{t.name} ({roleLabel(t.role)})</option>
+                  <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
               </select>
             </div>
-
-            {entryType === 'income' && (
-              <div className="card" style={{ padding: '1rem' }}>
-                <h4 style={{ marginBottom: '0.75rem' }}>Cálculo de Comissão</h4>
-                <div className="form-grid">
-                  <div className="form-group">
-                    <label>Adicional noturno: horas</label>
-                    <input type="number" min="0" value={nightHours} onChange={e => setNightHours(e.target.value)} />
-                  </div>
-                  <div className="form-group">
-                    <label>Valor/hora noturna (R$)</label>
-                    <input type="number" min="0" value={nightRate} onChange={e => setNightRate(e.target.value)} />
-                  </div>
-                  <div className="form-group">
-                    <label>Hora extra: horas</label>
-                    <input type="number" min="0" value={overtimeHours} onChange={e => setOvertimeHours(e.target.value)} />
-                  </div>
-                  <div className="form-group">
-                    <label>Valor/hora extra (R$)</label>
-                    <input type="number" min="0" value={overtimeRate} onChange={e => setOvertimeRate(e.target.value)} />
-                  </div>
-                </div>
-                <div style={{ marginTop: '0.75rem', fontSize: '0.85rem' }}>
-                  <div>Comissão do serviço: <strong>R$ {computedServiceCommission.toFixed(2)}</strong></div>
-                  <div>Adicional noturno: <strong>R$ {computedNight.toFixed(2)}</strong></div>
-                  <div>Hora extra: <strong>R$ {computedOvertime.toFixed(2)}</strong></div>
-                  <div style={{ marginTop: '0.35rem' }}>Comissão total: <strong>R$ {totalCommission.toFixed(2)}</strong></div>
-                </div>
-              </div>
-            )}
-
             <div className="form-group">
-              <label>Descrição / anotação</label>
-              <textarea rows={3} placeholder={entryType === 'income' ? 'Ex: Instalação do cliente João, Centro' : 'Ex: Material usado na obra'} value={description} onChange={e => setDescription(e.target.value)} />
+              <label>Data inicial</label>
+              <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} />
             </div>
+            <div className="form-group">
+              <label>Data final</label>
+              <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} />
+            </div>
+            <div className="form-group">
+              <label>Busca (texto)</label>
+              <input placeholder="Categoria ou descrição" value={filterSearch} onChange={e => setFilterSearch(e.target.value)} />
+            </div>
+          </div>
+          <button type="button" className="btn btn-sm btn-secondary" style={{ marginBottom: '1rem' }} onClick={fetchEntries}>Aplicar filtros no servidor</button>
 
-            <button type="submit" className={`btn btn-block ${entryType === 'income' ? 'btn-success' : 'btn-danger'}`} disabled={loading}>
-              <Save size={18} /> {loading ? 'Registrando...' : entryType === 'income' ? 'Registrar Receita' : 'Registrar Despesa'}
-            </button>
-          </form>
-        </div>
+          {error && <div className="alert alert-danger">{error}</div>}
+          {success && <div className="alert alert-success">{success}</div>}
 
-        <div className="card">
-          <h4 style={{ marginBottom: '1rem' }}>Últimos Lançamentos</h4>
-          {recentEntries.length === 0 ? (
-            <p style={{ color: 'var(--text-secondary)' }}>Nenhum lançamento ainda. Comece registrando um serviço.</p>
-          ) : (
-            <div className="table-scroll">
+          <div className="table-scroll">
             <table className="data-table">
               <thead>
-                <tr><th>Tipo</th><th>Categoria</th><th>Valor</th><th>Periodicidade</th><th>Data</th></tr>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Categoria</th>
+                  <th>Funcionário</th>
+                  <th>Valor</th>
+                  <th>Comissão</th>
+                  <th>Período</th>
+                  <th>Data</th>
+                  <th></th>
+                </tr>
               </thead>
               <tbody>
-                {recentEntries.map((e: any) => {
+                {filteredRows.length === 0 ? (
+                  <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '2rem' }}>Nenhum lançamento encontrado.</td></tr>
+                ) : filteredRows.map((e: any) => {
                   const tax = Number(e.tax_fee) || 0;
                   const gross = Number(e.amount) || 0;
                   const net = e.entry_type === 'income' ? getEntryNetAmount(e) : gross;
                   const recurrence = recurrenceLabel(e?.metadata?.recurrence);
                   const dueDateLabel = e?.due_date ? new Date(`${e.due_date}T00:00:00`).toLocaleDateString('pt-BR') : null;
+                  const mem = e.metadata || {};
+                  const comm = e.entry_type === 'income' ? Number(mem.commission_total) || 0 : null;
+                  const tm = e.team_member_id ? teamById[e.team_member_id] : null;
                   return (
-                  <tr key={e.id}>
-                    <td><span className={`tag ${e.entry_type === 'income' ? 'tag-income' : 'tag-expense'}`}>{e.entry_type === 'income' ? 'Receita' : 'Despesa'}</span></td>
-                    <td style={{ fontSize: '0.85rem', fontWeight: 600 }}>{getFinanceCategoryLabel(e.category)}</td>
-                    <td>
-                      <div style={{ fontWeight: 600 }}>
-                        R$ {net.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    <tr key={e.id}>
+                      <td><span className={`tag ${e.entry_type === 'income' ? 'tag-income' : 'tag-expense'}`}>{e.entry_type === 'income' ? 'Receita' : 'Despesa'}</span></td>
+                      <td style={{ fontWeight: 600 }}>{getFinanceCategoryLabel(e.category)}</td>
+                      <td style={{ fontSize: '0.82rem' }}>{tm ? `${tm.name}` : '—'}</td>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>R$ {net.toFixed(2)}{e.entry_type === 'income' && tax > 0 ? ' líq.' : ''}</div>
                         {e.entry_type === 'income' && tax > 0 && (
-                          <span style={{ fontSize: '0.72rem', fontWeight: 500, color: 'var(--text-secondary)', marginLeft: 6 }}>líquido</span>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>Bruto {gross.toFixed(2)} · Taxa {tax.toFixed(2)}</div>
                         )}
-                      </div>
-                      {e.entry_type === 'income' && tax > 0 && (
-                        <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: 2 }}>
-                          Bruto R$ {gross.toFixed(2)} · Taxas R$ {tax.toFixed(2)}
+                      </td>
+                      <td style={{ fontSize: '0.82rem' }}>{comm != null && e.entry_type === 'income' ? `R$ ${comm.toFixed(2)}` : '—'}</td>
+                      <td style={{ fontSize: '0.78rem' }}>
+                        {e.entry_type === 'expense' ? recurrence : '—'}
+                        {dueDateLabel && <div style={{ color: 'var(--text-secondary)' }}>Venc. {dueDateLabel}</div>}
+                      </td>
+                      <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>{new Date(e.created_at).toLocaleString('pt-BR')}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                          <button type="button" className="btn btn-sm btn-secondary" onClick={() => loadEntryForEdit(e)}><Pencil size={14} /></button>
+                          <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDelete(e.id)}><Trash2 size={14} /></button>
                         </div>
-                      )}
-                    </td>
-                    <td style={{ fontSize: '0.8rem' }}>
-                      <div>{recurrence}</div>
-                      {dueDateLabel && <div style={{ color: 'var(--text-secondary)', marginTop: 2 }}>Venc.: {dueDateLabel}</div>}
-                    </td>
-                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>{new Date(e.created_at).toLocaleDateString('pt-BR')}</td>
-                  </tr>
+                      </td>
+                    </tr>
                   );
                 })}
               </tbody>
             </table>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };
