@@ -33,7 +33,7 @@ type QuickPeriod = 'today' | 'week' | 'month' | 'custom';
 
 export const Dashboard = () => {
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState<QuickPeriod>('month');
+  const [period, setPeriod] = useState<QuickPeriod>('today');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
   const [team, setTeam] = useState<TeamMember[]>([]);
