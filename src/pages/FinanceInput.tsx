@@ -121,6 +121,51 @@ export const FinanceInput = () => {
     });
   }, [entries, filterSearch]);
 
+  const listPeriodLabel = useMemo(() => {
+    const fmt = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString('pt-BR');
+    if (filterDateFrom && filterDateTo) return `${fmt(filterDateFrom)} — ${fmt(filterDateTo)}`;
+    if (filterDateFrom) return `A partir de ${fmt(filterDateFrom)}`;
+    if (filterDateTo) return `Até ${fmt(filterDateTo)}`;
+    return 'Sem intervalo de datas (últimos registros retornados)';
+  }, [filterDateFrom, filterDateTo]);
+
+  const listSummary = useMemo(() => {
+    let netIncome = 0;
+    let grossIncome = 0;
+    let incomeFees = 0;
+    let totalExpenses = 0;
+    let totalCommissions = 0;
+    let incomeCount = 0;
+    let expenseCount = 0;
+    for (const e of filteredRows) {
+      const amount = Number(e.amount) || 0;
+      const tax = Number(e.tax_fee) || 0;
+      if (e.entry_type === 'income') {
+        incomeCount += 1;
+        grossIncome += amount;
+        incomeFees += tax;
+        netIncome += getEntryNetAmount(e);
+        const c = Number(e.metadata?.commission_total);
+        if (!Number.isNaN(c) && c > 0) totalCommissions += c;
+      } else {
+        expenseCount += 1;
+        totalExpenses += amount;
+      }
+    }
+    const netProfit = netIncome - totalExpenses - totalCommissions;
+    return {
+      count: filteredRows.length,
+      netIncome,
+      grossIncome,
+      incomeFees,
+      totalExpenses,
+      totalCommissions,
+      netProfit,
+      incomeCount,
+      expenseCount,
+    };
+  }, [filteredRows]);
+
   const clearForm = () => {
     setEditingId(null);
     setAmount('');
@@ -525,6 +570,48 @@ export const FinanceInput = () => {
             </div>
           </div>
           <button type="button" className="btn btn-sm btn-secondary" style={{ marginBottom: '1rem' }} onClick={fetchEntries}>Aplicar filtros no servidor</button>
+
+          <div className="card" style={{ marginBottom: '1rem', padding: '1rem 1.1rem', background: 'rgba(0, 242, 254, 0.06)', border: '1px solid rgba(0, 242, 254, 0.15)' }}>
+            <h4 style={{ margin: '0 0 0.35rem', fontSize: '1rem' }}>Resumo do período consultado</h4>
+            <p style={{ margin: '0 0 0.85rem', fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+              <strong>{listPeriodLabel}</strong>
+              {filterSearch.trim() ? ' · busca por texto aplicada à tabela abaixo' : ''}
+              . Os totais são da <strong>lista exibida</strong> ({listSummary.count} lançamento{listSummary.count !== 1 ? 's' : ''}
+              {listSummary.incomeCount || listSummary.expenseCount
+                ? ` · ${listSummary.incomeCount} receita(s), ${listSummary.expenseCount} despesa(s)`
+                : ''}).
+            </p>
+            <div className="stat-grid" style={{ marginBottom: 0, gridTemplateColumns: 'repeat(auto-fill, minmax(9.5rem, 1fr))', gap: '0.65rem' }}>
+              <div className="card stat-card" style={{ margin: 0, padding: '0.65rem 0.75rem' }}>
+                <div className="stat-label" style={{ fontSize: '0.72rem' }}>Receita bruta</div>
+                <div className="stat-value sm text-success" style={{ fontSize: '0.95rem' }}>R$ {listSummary.grossIncome.toFixed(2)}</div>
+              </div>
+              {listSummary.incomeFees > 0 && (
+                <div className="card stat-card" style={{ margin: 0, padding: '0.65rem 0.75rem' }}>
+                  <div className="stat-label" style={{ fontSize: '0.72rem' }}>Taxas recebimento</div>
+                  <div className="stat-value sm text-danger" style={{ fontSize: '0.95rem' }}>R$ {listSummary.incomeFees.toFixed(2)}</div>
+                </div>
+              )}
+              <div className="card stat-card" style={{ margin: 0, padding: '0.65rem 0.75rem' }}>
+                <div className="stat-label" style={{ fontSize: '0.72rem' }}>Receita líquida</div>
+                <div className="stat-value sm text-success" style={{ fontSize: '0.95rem' }}>R$ {listSummary.netIncome.toFixed(2)}</div>
+              </div>
+              <div className="card stat-card" style={{ margin: 0, padding: '0.65rem 0.75rem' }}>
+                <div className="stat-label" style={{ fontSize: '0.72rem' }}>Despesas</div>
+                <div className="stat-value sm text-danger" style={{ fontSize: '0.95rem' }}>R$ {listSummary.totalExpenses.toFixed(2)}</div>
+              </div>
+              <div className="card stat-card" style={{ margin: 0, padding: '0.65rem 0.75rem' }}>
+                <div className="stat-label" style={{ fontSize: '0.72rem' }}>Comissões</div>
+                <div className="stat-value sm text-warning" style={{ fontSize: '0.95rem' }}>R$ {listSummary.totalCommissions.toFixed(2)}</div>
+              </div>
+              <div className="card stat-card" style={{ margin: 0, padding: '0.65rem 0.75rem', borderLeft: '3px solid var(--accent)' }}>
+                <div className="stat-label" style={{ fontSize: '0.72rem' }}>Lucro líquido</div>
+                <div className={`stat-value sm ${listSummary.netProfit >= 0 ? 'text-success' : 'text-danger'}`} style={{ fontSize: '0.95rem' }}>
+                  R$ {listSummary.netProfit.toFixed(2)}
+                </div>
+              </div>
+            </div>
+          </div>
 
           {error && <div className="alert alert-danger">{error}</div>}
           {success && <div className="alert alert-success">{success}</div>}
