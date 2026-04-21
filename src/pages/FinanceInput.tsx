@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ArrowUpCircle, ArrowDownCircle, Save, Pencil, Trash2, X, List, PlusCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getFinanceCategoryLabel, getEntryNetAmount } from '../lib/financeLabels';
@@ -14,6 +15,7 @@ type ExpenseRecurrence = 'one_time' | 'daily' | 'weekly' | 'monthly' | 'annual' 
 type MainTab = 'new' | 'list';
 
 export const FinanceInput = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [mainTab, setMainTab] = useState<MainTab>('new');
   const [entryType, setEntryType] = useState<'income' | 'expense'>('income');
   const [loading, setLoading] = useState(false);
@@ -202,6 +204,29 @@ export const FinanceInput = () => {
     setError('');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  const loadEntryRef = useRef(loadEntryForEdit);
+  loadEntryRef.current = loadEntryForEdit;
+
+  useEffect(() => {
+    const editId = searchParams.get('edit');
+    if (!editId) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase.from('finance_entries').select('*').eq('id', editId).maybeSingle();
+      if (cancelled) return;
+      setSearchParams({}, { replace: true });
+      if (!data) {
+        setError('Lançamento não encontrado ou sem permissão.');
+        setMainTab('list');
+        return;
+      }
+      loadEntryRef.current(data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, setSearchParams]);
 
   const buildPayload = () => {
     const insertData: any = {

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Save, UserPlus, Trash2, Target, Calculator, Pencil } from 'lucide-react';
+import { Save, UserPlus, Trash2, Target, Calculator } from 'lucide-react';
 
 interface TeamMember {
   id: string; name: string; role: string; fixed_cost: number; active: boolean;
@@ -151,19 +151,19 @@ export const TeamConfig = () => {
   };
 
   return (
-    <div className="page">
+    <div className="page page-team-config">
       <div className="page-header">
         <h2>Equipe, Metas & Comissões</h2>
         <p>Gerencie o custo fixo da equipe, catálogo de serviços e validação da meta diária</p>
       </div>
 
       {/* VALIDAÇÃO DE META */}
-      <div className="card" style={{ marginBottom: '1.5rem', borderLeft: dailyMargin >= 0 ? '3px solid var(--success)' : '3px solid var(--danger)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-          <Calculator size={22} color="var(--accent)" />
+      <div className="card" style={{ marginBottom: '1rem', borderLeft: dailyMargin >= 0 ? '3px solid var(--success)' : '3px solid var(--danger)' }}>
+        <div className="sim-header">
+          <Calculator size={18} color="var(--accent)" />
           <h4>Simulador de Meta Diária</h4>
         </div>
-        <div className="form-grid" style={{ marginBottom: '1rem' }}>
+        <div className="form-grid" style={{ marginBottom: '0.65rem' }}>
           <div className="form-group">
             <label>Meta diária por técnico (R$)</label>
             <input type="number" value={dailyTarget} onChange={e => setDailyTarget(e.target.value)} />
@@ -173,47 +173,47 @@ export const TeamConfig = () => {
             <input type="number" value={adsBudget} onChange={e => setAdsBudget(e.target.value)} />
           </div>
         </div>
-        <button type="button" className="btn btn-primary btn-sm" onClick={saveTargets}><Save size={14} /> Salvar metas diárias</button>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
+        <button type="button" className="btn btn-primary btn-sm" onClick={saveTargets} style={{ marginBottom: '0.35rem' }}><Save size={13} /> Salvar metas</button>
+        <div className="sim-kpis">
           <div>
-            <div className="stat-label">Folha Mensal Total</div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>R$ {totalPayroll.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
+            <div className="stat-label">Folha mensal total</div>
+            <div className="sim-kpi-val">R$ {totalPayroll.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
           </div>
           <div>
-            <div className="stat-label">Folha / Dia ({daysInMonth} dias úteis)</div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 700 }}>R$ {dailyPayroll.toFixed(2)}</div>
+            <div className="stat-label">Folha / dia ({daysInMonth} úteis)</div>
+            <div className="sim-kpi-val">R$ {dailyPayroll.toFixed(2)}</div>
           </div>
           <div>
-            <div className="stat-label">Custo Fixo Diário (Folha+Ads)</div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 700, color: 'var(--danger)' }}>R$ {dailyFixedCost.toFixed(2)}</div>
+            <div className="stat-label">Custo fixo diário (folha + ads)</div>
+            <div className="sim-kpi-val" style={{ color: 'var(--danger)' }}>R$ {dailyFixedCost.toFixed(2)}</div>
           </div>
           <div>
-            <div className="stat-label">Margem Diária Estimada</div>
-            <div style={{ fontSize: '1.2rem', fontWeight: 700, color: dailyMargin >= 0 ? 'var(--success)' : 'var(--danger)' }}>
-              R$ {dailyMargin.toFixed(2)} {dailyMargin < 0 ? '⚠️' : '✓'}
+            <div className="stat-label">Margem diária estimada</div>
+            <div className="sim-kpi-val" style={{ color: dailyMargin >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+              R$ {dailyMargin.toFixed(2)} {dailyMargin < 0 ? '⚠' : '✓'}
             </div>
           </div>
         </div>
         {dailyMargin < 0 && (
-          <div className="alert alert-danger" style={{ marginTop: '1rem', marginBottom: 0 }}>
-            ⚠️ A meta de R$ {dailyTarget} NÃO cobre os custos fixos diários. Considere aumentar para pelo menos R$ {Math.ceil(dailyFixedCost + 50)}.
+          <div className="alert alert-danger" style={{ marginTop: '0.75rem', marginBottom: 0 }}>
+            A meta de R$ {dailyTarget} não cobre os custos fixos diários. Considere pelo menos R$ {Math.ceil(dailyFixedCost + 50)}.
           </div>
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
+      <div className="two-col-equipe">
         {/* EQUIPE */}
         <div className="card">
-          <h4 style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Target size={18} /> Equipe Cadastrada
+          <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+            <Target size={16} /> Equipe cadastrada
           </h4>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-            Edite nome, função ou custo e clique em <strong>Salvar</strong> na mesma linha. Se aparecer erro em vermelho, o Supabase bloqueou a alteração (permissão ou rede).
+          <p className="help-text">
+            Edite a linha e use o ícone de salvar. Erros em vermelho vêm do Supabase (rede ou permissão).
           </p>
           <div className="table-scroll">
           <table className="data-table">
             <thead>
-              <tr><th>Nome</th><th>Função</th><th>Custo Fixo</th><th></th></tr>
+              <tr><th>Nome</th><th>Função</th><th>Custo fixo</th><th className="col-actions" aria-label="Ações" /></tr>
             </thead>
             <tbody>
               {team.filter(t => t.active).map(t => (
@@ -238,11 +238,15 @@ export const TeamConfig = () => {
                       }}
                     />
                   </td>
-                  <td style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => updateMember(t)} title="Salvar alterações desta linha">
-                      <Pencil size={14} /> Salvar
-                    </button>
-                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeMember(t.id)}><Trash2 size={14} /></button>
+                  <td className="col-actions">
+                    <div className="team-row-actions">
+                      <button type="button" className="btn btn-sm btn-secondary btn-icon-only" onClick={() => updateMember(t)} title="Salvar esta linha" aria-label="Salvar">
+                        <Save size={15} strokeWidth={2} />
+                      </button>
+                      <button type="button" className="btn btn-sm btn-danger btn-icon-only" onClick={() => removeMember(t.id)} title="Inativar membro" aria-label="Excluir">
+                        <Trash2 size={15} strokeWidth={2} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -250,8 +254,8 @@ export const TeamConfig = () => {
           </table>
           </div>
 
-          <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
-            <p style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.85rem' }}>Adicionar Membro</p>
+          <div className="team-add-section">
+            <p className="team-add-title">Adicionar membro</p>
             <div className="form-grid">
               <div className="form-group">
                 <label>Nome</label>
@@ -266,32 +270,32 @@ export const TeamConfig = () => {
                 </select>
               </div>
             </div>
-            <div className="form-group" style={{ marginTop: '0.75rem' }}>
-              <label>Custo Fixo Mensal (R$)</label>
+            <div className="form-group" style={{ marginTop: '0.45rem' }}>
+              <label>Custo fixo mensal (R$)</label>
               <input type="number" placeholder="4000.00" value={newCost} onChange={e => setNewCost(e.target.value)} />
             </div>
-            <button type="button" className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={addMember}><UserPlus size={16} /> Adicionar</button>
+            <button type="button" className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={addMember}><UserPlus size={15} /> Adicionar</button>
           </div>
         </div>
 
         {/* CATÁLOGO DE SERVIÇOS */}
         <div className="card">
-          <h4 style={{ marginBottom: '1.25rem' }}>Catálogo de Serviços & Comissões</h4>
-          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-            Ajuste preço ou comissão e use <strong>Salvar</strong> na linha do serviço.
+          <h4>Catálogo de serviços & comissões</h4>
+          <p className="help-text">
+            Ajuste preço ou comissão e salve pela linha (ícone de disquete).
           </p>
           <div className="table-scroll">
           <table className="data-table">
             <thead>
-              <tr><th>Serviço</th><th>Preço Base</th><th>Comissão</th><th></th></tr>
+              <tr><th>Serviço</th><th>Preço base</th><th>Comissão</th><th className="col-actions" aria-label="Ações" /></tr>
             </thead>
             <tbody>
               {services.map(s => (
                 <tr key={s.id}>
                   <td><input value={s.name} onChange={e => updateServiceField(s.id, 'name', e.target.value)} /></td>
-                  <td><input type="number" value={Number(s.base_price)} onChange={e => updateServiceField(s.id, 'base_price', Number(e.target.value))} /></td>
-                  <td>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
+                  <td style={{ maxWidth: '6.5rem' }}><input type="number" value={Number(s.base_price)} onChange={e => updateServiceField(s.id, 'base_price', Number(e.target.value))} /></td>
+                  <td style={{ minWidth: '7.5rem' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: '0.25rem' }}>
                       <select value={s.commission_type} onChange={e => updateServiceField(s.id, 'commission_type', e.target.value)}>
                         <option value="percentage">%</option>
                         <option value="fixed">R$</option>
@@ -299,11 +303,15 @@ export const TeamConfig = () => {
                       <input type="number" value={Number(s.commission_value)} onChange={e => updateServiceField(s.id, 'commission_value', Number(e.target.value))} />
                     </div>
                   </td>
-                  <td style={{ display: 'flex', gap: '0.35rem' }}>
-                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => updateService(s)} title="Salvar alterações desta linha">
-                      <Pencil size={14} /> Salvar
-                    </button>
-                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeService(s.id)}><Trash2 size={14} /></button>
+                  <td className="col-actions">
+                    <div className="team-row-actions">
+                      <button type="button" className="btn btn-sm btn-secondary btn-icon-only" onClick={() => updateService(s)} title="Salvar esta linha" aria-label="Salvar">
+                        <Save size={15} strokeWidth={2} />
+                      </button>
+                      <button type="button" className="btn btn-sm btn-danger btn-icon-only" onClick={() => removeService(s.id)} title="Remover serviço" aria-label="Excluir">
+                        <Trash2 size={15} strokeWidth={2} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -311,20 +319,20 @@ export const TeamConfig = () => {
           </table>
           </div>
 
-          <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
-            <p style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.85rem' }}>Adicionar Serviço</p>
+          <div className="team-add-section">
+            <p className="team-add-title">Adicionar serviço</p>
             <div className="form-group">
-              <label>Nome do Serviço</label>
-              <input placeholder="Ex: Manutenção Preventiva" value={svcName} onChange={e => setSvcName(e.target.value)} />
+              <label>Nome do serviço</label>
+              <input placeholder="Ex.: Manutenção preventiva" value={svcName} onChange={e => setSvcName(e.target.value)} />
             </div>
-            <div className="form-grid" style={{ marginTop: '0.75rem' }}>
+            <div className="form-grid" style={{ marginTop: '0.45rem' }}>
               <div className="form-group">
-                <label>Preço Base (R$)</label>
+                <label>Preço base (R$)</label>
                 <input type="number" placeholder="200.00" value={svcPrice} onChange={e => setSvcPrice(e.target.value)} />
               </div>
               <div className="form-group">
                 <label>Comissão</label>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: '0.25rem' }}>
                   <select value={svcCommissionType} onChange={e => setSvcCommissionType(e.target.value as 'percentage' | 'fixed')}>
                     <option value="percentage">%</option>
                     <option value="fixed">R$</option>
@@ -333,7 +341,7 @@ export const TeamConfig = () => {
                 </div>
               </div>
             </div>
-            <button type="button" className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={addService}><Save size={16} /> Adicionar</button>
+            <button type="button" className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={addService}><Save size={15} /> Adicionar</button>
           </div>
         </div>
       </div>
