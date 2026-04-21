@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Save, UserPlus, Trash2, Target, Calculator } from 'lucide-react';
+import { Save, UserPlus, Trash2, Target, Calculator, Pencil } from 'lucide-react';
 
 interface TeamMember {
   id: string; name: string; role: string; fixed_cost: number; active: boolean;
@@ -16,6 +16,7 @@ export const TeamConfig = () => {
   const [dailyTarget, setDailyTarget] = useState('600');
   const [adsBudget, setAdsBudget] = useState('100');
   const [success, setSuccess] = useState('');
+  const [saveError, setSaveError] = useState('');
 
   // Novo membro
   const [newName, setNewName] = useState('');
@@ -25,7 +26,8 @@ export const TeamConfig = () => {
   // Novo serviço
   const [svcName, setSvcName] = useState('');
   const [svcPrice, setSvcPrice] = useState('');
-  const [svcCommission, setSvcCommission] = useState('');
+  const [svcCommission, setSvcCommission] = useState('25');
+  const [svcCommissionType, setSvcCommissionType] = useState<'percentage' | 'fixed'>('percentage');
 
   useEffect(() => { fetchAll(); }, []);
 
@@ -37,6 +39,16 @@ export const TeamConfig = () => {
     ]);
     if (tRes.data) setTeam(tRes.data);
     if (sRes.data) setServices(sRes.data);
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: targets } = await supabase
+      .from('operational_targets')
+      .select('daily_ads_budget, daily_profit_target')
+      .eq('target_date', today)
+      .maybeSingle();
+    if (targets) {
+      setDailyTarget(String(Number(targets.daily_profit_target)));
+      setAdsBudget(String(Number(targets.daily_ads_budget)));
+    }
     setLoading(false);
   };
 
@@ -51,7 +63,7 @@ export const TeamConfig = () => {
   const addMember = async () => {
     if (!newName || !newCost) return;
     await supabase.from('team_members').insert({ name: newName, role: newRole, fixed_cost: parseFloat(newCost) });
-    setNewName(''); setNewCost('');
+    setNewName(''); setNewCost(''); setNewRole('helper');
     fetchAll();
   };
 
@@ -60,19 +72,82 @@ export const TeamConfig = () => {
     fetchAll();
   };
 
+  const updateMember = async (member: TeamMember) => {
+    setSaveError('');
+    setSuccess('');
+    const { error } = await supabase
+      .from('team_members')
+      .update({
+        name: member.name.trim(),
+        role: member.role,
+        fixed_cost: Number(member.fixed_cost),
+      })
+      .eq('id', member.id);
+    if (error) {
+      setSaveError(`Não foi possível salvar o membro: ${error.message}`);
+      return;
+    }
+    setSuccess('Membro atualizado com sucesso.');
+    await fetchAll();
+  };
+
+  const updateService = async (service: ServiceItem) => {
+    setSaveError('');
+    setSuccess('');
+    const { error } = await supabase
+      .from('service_catalog')
+      .update({
+        name: service.name.trim(),
+        base_price: Number(service.base_price),
+        commission_type: service.commission_type,
+        commission_value: Number(service.commission_value),
+      })
+      .eq('id', service.id);
+    if (error) {
+      setSaveError(`Não foi possível salvar o serviço: ${error.message}`);
+      return;
+    }
+    setSuccess('Serviço e comissão atualizados com sucesso.');
+    await fetchAll();
+  };
+
   const addService = async () => {
     if (!svcName || !svcPrice) return;
     await supabase.from('service_catalog').insert({
       name: svcName, base_price: parseFloat(svcPrice),
-      commission_type: 'fixed', commission_value: parseFloat(svcCommission || '0')
+      commission_type: svcCommissionType, commission_value: parseFloat(svcCommission || '0')
     });
-    setSvcName(''); setSvcPrice(''); setSvcCommission('');
+    setSvcName(''); setSvcPrice(''); setSvcCommission('25'); setSvcCommissionType('percentage');
     fetchAll();
   };
 
   const removeService = async (id: string) => {
     await supabase.from('service_catalog').delete().eq('id', id);
     fetchAll();
+  };
+
+  const saveTargets = async () => {
+    setSaveError('');
+    setSuccess('');
+    const today = new Date().toISOString().slice(0, 10);
+    const { error } = await supabase.from('operational_targets').upsert({
+      target_date: today,
+      daily_ads_budget: Number(adsBudget || '0'),
+      daily_profit_target: Number(dailyTarget || '0'),
+    }, { onConflict: 'target_date' });
+    if (error) {
+      setSaveError(`Não foi possível salvar as metas: ${error.message}`);
+      return;
+    }
+    setSuccess('Metas diárias salvas com sucesso.');
+  };
+
+  const updateMemberField = (id: string, field: keyof TeamMember, value: string | number | boolean) => {
+    setTeam(prev => prev.map(member => member.id === id ? { ...member, [field]: value } : member));
+  };
+
+  const updateServiceField = (id: string, field: keyof ServiceItem, value: string | number) => {
+    setServices(prev => prev.map(service => service.id === id ? { ...service, [field]: value } : service));
   };
 
   return (
@@ -98,6 +173,7 @@ export const TeamConfig = () => {
             <input type="number" value={adsBudget} onChange={e => setAdsBudget(e.target.value)} />
           </div>
         </div>
+        <button type="button" className="btn btn-primary btn-sm" onClick={saveTargets}><Save size={14} /> Salvar metas diárias</button>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem' }}>
           <div>
             <div className="stat-label">Folha Mensal Total</div>
@@ -131,6 +207,10 @@ export const TeamConfig = () => {
           <h4 style={{ marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <Target size={18} /> Equipe Cadastrada
           </h4>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+            Edite nome, função ou custo e clique em <strong>Salvar</strong> na mesma linha. Se aparecer erro em vermelho, o Supabase bloqueou a alteração (permissão ou rede).
+          </p>
+          <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr><th>Nome</th><th>Função</th><th>Custo Fixo</th><th></th></tr>
@@ -138,14 +218,37 @@ export const TeamConfig = () => {
             <tbody>
               {team.filter(t => t.active).map(t => (
                 <tr key={t.id}>
-                  <td style={{ fontWeight: 600 }}>{t.name}</td>
-                  <td><span className={`tag ${t.role === 'technician' ? 'tag-qualified' : 'tag-scheduled'}`}>{t.role === 'technician' ? 'Técnico' : 'Ajudante'}</span></td>
-                  <td>R$ {Number(t.fixed_cost).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
-                  <td><button className="btn btn-sm btn-danger" onClick={() => removeMember(t.id)}><Trash2 size={14} /></button></td>
+                  <td><input value={t.name} onChange={e => updateMemberField(t.id, 'name', e.target.value)} /></td>
+                  <td>
+                    <select value={t.role} onChange={e => updateMemberField(t.id, 'role', e.target.value)}>
+                      <option value="technician">Técnico</option>
+                      <option value="helper">Ajudante</option>
+                      <option value="servant">Servente</option>
+                    </select>
+                  </td>
+                  <td>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={t.fixed_cost == null ? '' : String(t.fixed_cost)}
+                      onChange={e => {
+                        const v = e.target.value;
+                        updateMemberField(t.id, 'fixed_cost', v === '' ? 0 : Number(v));
+                      }}
+                    />
+                  </td>
+                  <td style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => updateMember(t)} title="Salvar alterações desta linha">
+                      <Pencil size={14} /> Salvar
+                    </button>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeMember(t.id)}><Trash2 size={14} /></button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
 
           <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
             <p style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.85rem' }}>Adicionar Membro</p>
@@ -159,6 +262,7 @@ export const TeamConfig = () => {
                 <select value={newRole} onChange={e => setNewRole(e.target.value)}>
                   <option value="technician">Técnico</option>
                   <option value="helper">Ajudante</option>
+                  <option value="servant">Servente</option>
                 </select>
               </div>
             </div>
@@ -166,13 +270,17 @@ export const TeamConfig = () => {
               <label>Custo Fixo Mensal (R$)</label>
               <input type="number" placeholder="4000.00" value={newCost} onChange={e => setNewCost(e.target.value)} />
             </div>
-            <button className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={addMember}><UserPlus size={16} /> Adicionar</button>
+            <button type="button" className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={addMember}><UserPlus size={16} /> Adicionar</button>
           </div>
         </div>
 
         {/* CATÁLOGO DE SERVIÇOS */}
         <div className="card">
           <h4 style={{ marginBottom: '1.25rem' }}>Catálogo de Serviços & Comissões</h4>
+          <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
+            Ajuste preço ou comissão e use <strong>Salvar</strong> na linha do serviço.
+          </p>
+          <div className="table-scroll">
           <table className="data-table">
             <thead>
               <tr><th>Serviço</th><th>Preço Base</th><th>Comissão</th><th></th></tr>
@@ -180,14 +288,28 @@ export const TeamConfig = () => {
             <tbody>
               {services.map(s => (
                 <tr key={s.id}>
-                  <td style={{ fontWeight: 600 }}>{s.name}</td>
-                  <td>R$ {Number(s.base_price).toFixed(2)}</td>
-                  <td>R$ {Number(s.commission_value).toFixed(2)}</td>
-                  <td><button className="btn btn-sm btn-danger" onClick={() => removeService(s.id)}><Trash2 size={14} /></button></td>
+                  <td><input value={s.name} onChange={e => updateServiceField(s.id, 'name', e.target.value)} /></td>
+                  <td><input type="number" value={Number(s.base_price)} onChange={e => updateServiceField(s.id, 'base_price', Number(e.target.value))} /></td>
+                  <td>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
+                      <select value={s.commission_type} onChange={e => updateServiceField(s.id, 'commission_type', e.target.value)}>
+                        <option value="percentage">%</option>
+                        <option value="fixed">R$</option>
+                      </select>
+                      <input type="number" value={Number(s.commission_value)} onChange={e => updateServiceField(s.id, 'commission_value', Number(e.target.value))} />
+                    </div>
+                  </td>
+                  <td style={{ display: 'flex', gap: '0.35rem' }}>
+                    <button type="button" className="btn btn-sm btn-secondary" onClick={() => updateService(s)} title="Salvar alterações desta linha">
+                      <Pencil size={14} /> Salvar
+                    </button>
+                    <button type="button" className="btn btn-sm btn-danger" onClick={() => removeService(s.id)}><Trash2 size={14} /></button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          </div>
 
           <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--border)', paddingTop: '1.25rem' }}>
             <p style={{ fontWeight: 600, marginBottom: '0.75rem', fontSize: '0.85rem' }}>Adicionar Serviço</p>
@@ -201,14 +323,23 @@ export const TeamConfig = () => {
                 <input type="number" placeholder="200.00" value={svcPrice} onChange={e => setSvcPrice(e.target.value)} />
               </div>
               <div className="form-group">
-                <label>Comissão Fixa (R$)</label>
-                <input type="number" placeholder="30.00" value={svcCommission} onChange={e => setSvcCommission(e.target.value)} />
+                <label>Comissão</label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.35rem' }}>
+                  <select value={svcCommissionType} onChange={e => setSvcCommissionType(e.target.value as 'percentage' | 'fixed')}>
+                    <option value="percentage">%</option>
+                    <option value="fixed">R$</option>
+                  </select>
+                  <input type="number" placeholder="25" value={svcCommission} onChange={e => setSvcCommission(e.target.value)} />
+                </div>
               </div>
             </div>
-            <button className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={addService}><Save size={16} /> Adicionar</button>
+            <button type="button" className="btn btn-primary" style={{ marginTop: '0.75rem' }} onClick={addService}><Save size={16} /> Adicionar</button>
           </div>
         </div>
       </div>
+      {loading && <p style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>Carregando equipe e catálogo...</p>}
+      {saveError && <div className="alert alert-danger" style={{ marginTop: '1rem' }}>{saveError}</div>}
+      {success && <div className="alert alert-success" style={{ marginTop: '1rem' }}>{success}</div>}
     </div>
   );
 };
