@@ -7,6 +7,14 @@ export type CatalogService = {
   commission_value: number;
 };
 
+type MetadataServiceItem = {
+  service_id?: unknown;
+  service_name?: unknown;
+  amount?: unknown;
+  commission_type?: unknown;
+  commission_value?: unknown;
+};
+
 export function commissionServiceAmountFromGross(
   gross: number,
   service: Pick<CatalogService, 'commission_type' | 'commission_value'>
@@ -39,9 +47,35 @@ export function getSuggestedCommissionFromCatalog(
   service: CatalogService | null;
 } {
   const md = entry.metadata || {};
+  const gross = Number(entry.amount) || 0;
+  const servicesRaw = Array.isArray(md.services) ? (md.services as MetadataServiceItem[]) : [];
+  const normalizedServices = servicesRaw
+    .map((item) => {
+      const sid = typeof item.service_id === 'string' ? item.service_id : '';
+      const service = sid ? serviceById[sid] ?? null : null;
+      const amount = Number(item.amount) || 0;
+      return service && amount > 0 ? { service, amount } : null;
+    })
+    .filter((item): item is { service: CatalogService; amount: number } => Boolean(item));
+
+  if (normalizedServices.length > 0) {
+    const serviceAmount = normalizedServices.reduce((sum, item) => {
+      return sum + commissionServiceAmountFromGross(item.amount, item.service);
+    }, 0);
+    const night = Number(md.commission_night_amount) || 0;
+    const ot = Number(md.commission_overtime_amount) || 0;
+    return {
+      total: Number((serviceAmount + night + ot).toFixed(2)),
+      serviceAmount: Number(serviceAmount.toFixed(2)),
+      night,
+      overtime: ot,
+      hasService: true,
+      service: normalizedServices[0].service,
+    };
+  }
+
   const sid = typeof md.service_id === 'string' ? md.service_id : undefined;
   const service = sid ? serviceById[sid] ?? null : null;
-  const gross = Number(entry.amount) || 0;
   const night = Number(md.commission_night_amount) || 0;
   const ot = Number(md.commission_overtime_amount) || 0;
   if (!service) {
@@ -64,8 +98,39 @@ export function mergeCatalogCommissionIntoMetadata(
   service: CatalogService
 ): Record<string, unknown> {
   const md = { ...(entry.metadata || {}) } as Record<string, unknown>;
-  const gross = Number(entry.amount) || 0;
-  const svcAmt = commissionServiceAmountFromGross(gross, service);
+  const servicesRaw = Array.isArray(md.services) ? (md.services as MetadataServiceItem[]) : [];
+  let svcAmt = 0;
+
+  if (servicesRaw.length > 0) {
+    const nextServices = servicesRaw.map((item) => {
+      if (typeof item?.service_id !== 'string') return item;
+      if (item.service_id !== service.id) return item;
+      return {
+        ...item,
+        service_name: service.name,
+        commission_type: service.commission_type,
+        commission_value: service.commission_value,
+      };
+    });
+    md.services = nextServices;
+    svcAmt = nextServices.reduce((sum, item) => {
+      const amount = Number(item?.amount) || 0;
+      const commissionType =
+        item?.commission_type === 'percentage' || item?.commission_type === 'fixed'
+          ? item.commission_type
+          : null;
+      const commissionValue = Number(item?.commission_value);
+      if (!commissionType || Number.isNaN(commissionValue) || amount <= 0) return sum;
+      return sum + commissionServiceAmountFromGross(amount, {
+        commission_type: commissionType,
+        commission_value: commissionValue,
+      });
+    }, 0);
+  } else {
+    const gross = Number(entry.amount) || 0;
+    svcAmt = commissionServiceAmountFromGross(gross, service);
+  }
+
   const night = Number(md.commission_night_amount) || 0;
   const ot = Number(md.commission_overtime_amount) || 0;
   md.service_id = service.id;

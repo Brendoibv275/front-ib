@@ -23,10 +23,10 @@ interface Metrics {
   dailyTarget: number;
 }
 
-interface TeamMember {
+interface TeamItem {
   id: string;
   name: string;
-  role: string;
+  active: boolean;
 }
 
 type QuickPeriod = 'today' | 'week' | 'month' | 'custom';
@@ -36,9 +36,9 @@ export const Dashboard = () => {
   const [period, setPeriod] = useState<QuickPeriod>('today');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
-  const [team, setTeam] = useState<TeamMember[]>([]);
-  const [memberFilter, setMemberFilter] = useState('all');
-  const [memberPerformance, setMemberPerformance] = useState({ installations: 0, cleanings: 0, electrical: 0, repairs: 0, total: 0 });
+  const [teams, setTeams] = useState<TeamItem[]>([]);
+  const [teamFilter, setTeamFilter] = useState('all');
+  const [teamPerformance, setTeamPerformance] = useState({ installations: 0, cleanings: 0, electrical: 0, repairs: 0, total: 0 });
   const [metrics, setMetrics] = useState<Metrics>({
     grossRevenue: 0, netRevenueAfterFees: 0, totalIncomeFees: 0, totalCommissions: 0, totalExpenses: 0,
     adsCost: 0, logisticsCost: 0, materialCost: 0, payrollCost: 0,
@@ -53,13 +53,13 @@ export const Dashboard = () => {
     monthAgo.setDate(now.getDate() - 30);
     setCustomStart(monthAgo.toISOString().slice(0, 10));
     setCustomEnd(now.toISOString().slice(0, 10));
-    fetchTeamMembers();
+    fetchTeams();
   }, []);
 
   useEffect(() => {
     if (!customStart || !customEnd) return;
     fetchAll();
-  }, [period, customStart, customEnd, memberFilter]);
+  }, [period, customStart, customEnd, teamFilter]);
 
   const getDateRange = () => {
     const now = new Date();
@@ -81,21 +81,21 @@ export const Dashboard = () => {
     return { start: customStartDate.toISOString(), end: customEndDate.toISOString() };
   };
 
-  const fetchTeamMembers = async () => {
-    const { data } = await supabase.from('team_members').select('id, name, role').eq('active', true).order('name');
-    if (data) setTeam(data);
+  const fetchTeams = async () => {
+    const { data } = await supabase.from('teams').select('id, name, active').eq('active', true).order('name');
+    if (data) setTeams(data as TeamItem[]);
   };
 
   const calcPerformance = (entries: any[]) => {
-    if (memberFilter === 'all') {
-      setMemberPerformance({ installations: 0, cleanings: 0, electrical: 0, repairs: 0, total: 0 });
+    if (teamFilter === 'all') {
+      setTeamPerformance({ installations: 0, cleanings: 0, electrical: 0, repairs: 0, total: 0 });
       return;
     }
-    const memberEntries = entries.filter(
-      (e: any) => e.entry_type === 'income' && e.team_member_id === memberFilter
+    const teamEntries = entries.filter(
+      (e: any) => e.entry_type === 'income' && e.team_id === teamFilter
     );
-    const perf = { installations: 0, cleanings: 0, electrical: 0, repairs: 0, total: memberEntries.length };
-    memberEntries.forEach((entry: any) => {
+    const perf = { installations: 0, cleanings: 0, electrical: 0, repairs: 0, total: teamEntries.length };
+    teamEntries.forEach((entry: any) => {
       const category = entry.category || '';
       const desc = (entry.description || '').toLowerCase();
       if (category === 'service_revenue') perf.installations += 1;
@@ -103,7 +103,7 @@ export const Dashboard = () => {
       if (category === 'service_electrical') perf.electrical += 1;
       if (category === 'service_uninstall' || desc.includes('conserto') || desc.includes('manutenção')) perf.repairs += 1;
     });
-    setMemberPerformance(perf);
+    setTeamPerformance(perf);
   };
 
   const fetchAll = async () => {
@@ -111,14 +111,19 @@ export const Dashboard = () => {
     try {
       const { start, end } = getDateRange();
       const targetDate = period === 'custom' ? customStart : new Date().toISOString().slice(0, 10);
+      const startDate = new Date(start);
+      const endDate = new Date(end);
       const [finRes, leadsRes, apptRes, targetRes] = await Promise.all([
-        supabase.from('finance_entries').select('*').gte('created_at', start).lte('created_at', end),
+        supabase.from('finance_entries').select('*').gte('movement_date', start.slice(0, 10)).lte('movement_date', end.slice(0, 10)),
         supabase.from('leads').select('id, stage, created_at').gte('created_at', start).lte('created_at', end),
         supabase.from('appointments').select('id, status, created_at').gte('created_at', start).lte('created_at', end),
         supabase.from('operational_targets').select('daily_profit_target').eq('target_date', targetDate).maybeSingle(),
       ]);
 
-      const entries = finRes.data || [];
+      let entries = finRes.data || [];
+      if (teamFilter !== 'all') {
+        entries = entries.filter((entry: any) => entry.team_id === teamFilter);
+      }
       const leads = leadsRes.data || [];
       const appts = apptRes.data || [];
       const configuredTarget = Number(targetRes.data?.daily_profit_target || 600);
@@ -133,12 +138,20 @@ export const Dashboard = () => {
       let totalExpAll = 0;
       let totalCommissions = 0;
       let commissionsWithoutMember = 0;
+      let proratedPayroll = 0;
+      const monthlyPayrollEntries: any[] = [];
       const dailyMap: Record<string, { revenueNet: number; expense: number; commissions: number }> = {};
+      const localDateKey = (input: string) => {
+        const d = new Date(`${input}T12:00:00`);
+        return d.toISOString().slice(0, 10);
+      };
+      const dayLabel = (dateKey: string) => new Date(`${dateKey}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 
       entries.forEach((e: any) => {
         const val = Number(e.amount) || 0;
         const tax = Number(e.tax_fee) || 0;
-        const day = new Date(e.created_at).toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit' });
+        const movementDate = typeof e.movement_date === 'string' ? e.movement_date : new Date(e.created_at).toISOString().slice(0, 10);
+        const day = localDateKey(movementDate);
         if (!dailyMap[day]) dailyMap[day] = { revenueNet: 0, expense: 0, commissions: 0 };
 
         if (e.entry_type === 'income') {
@@ -154,6 +167,11 @@ export const Dashboard = () => {
             if (!e.team_member_id) commissionsWithoutMember += 1;
           }
         } else {
+          const isMonthlyProrated = e.category === 'fixed_payroll' && Boolean(e.metadata?.is_monthly_prorated);
+          if (isMonthlyProrated) {
+            monthlyPayrollEntries.push(e);
+            return;
+          }
           totalExpAll += val;
           dailyMap[day].expense += val;
           if (e.category === 'marketing_ads') ads += val;
@@ -164,6 +182,39 @@ export const Dashboard = () => {
         }
       });
 
+      const iterateDays = (from: Date, to: Date, fn: (dt: Date) => void) => {
+        const current = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+        const limit = new Date(to.getFullYear(), to.getMonth(), to.getDate());
+        while (current <= limit) {
+          fn(current);
+          current.setDate(current.getDate() + 1);
+        }
+      };
+
+      monthlyPayrollEntries.forEach((entry: any) => {
+        const amount = Number(entry.amount) || 0;
+        const movementDate = typeof entry.movement_date === 'string'
+          ? new Date(`${entry.movement_date}T12:00:00`)
+          : new Date(entry.created_at);
+        const year = movementDate.getFullYear();
+        const month = movementDate.getMonth();
+        const monthStart = new Date(year, month, 1);
+        const monthEnd = new Date(year, month + 1, 0);
+        const daysInMonth = monthEnd.getDate();
+        const effectiveStart = startDate > monthStart ? startDate : monthStart;
+        const effectiveEnd = endDate < monthEnd ? endDate : monthEnd;
+        if (effectiveStart > effectiveEnd) return;
+        const perDay = amount / daysInMonth;
+        iterateDays(effectiveStart, effectiveEnd, (dt) => {
+          const key = dt.toISOString().slice(0, 10);
+          if (!dailyMap[key]) dailyMap[key] = { revenueNet: 0, expense: 0, commissions: 0 };
+          dailyMap[key].expense += perDay;
+          proratedPayroll += perDay;
+        });
+      });
+
+      payroll += proratedPayroll;
+      totalExpAll += proratedPayroll;
       const bucketSum = ads + logistics + material + payroll + taxExp;
       const otherExp = Math.max(0, totalExpAll - bucketSum);
       const net = netRev - totalExpAll - totalCommissions;
@@ -188,8 +239,10 @@ export const Dashboard = () => {
         dailyTarget: configuredTarget,
       });
 
-      const chart = Object.entries(dailyMap).map(([day, vals]) => ({
-        name: day,
+      const chart = Object.entries(dailyMap)
+        .sort(([dayA], [dayB]) => dayA.localeCompare(dayB))
+        .map(([day, vals]) => ({
+        name: dayLabel(day),
         Receita: vals.revenueNet,
         Despesa: vals.expense,
         Lucro: vals.revenueNet - vals.expense - vals.commissions,
@@ -323,26 +376,26 @@ export const Dashboard = () => {
       </div>
 
       <div className="card" style={{ marginBottom: '1.5rem' }}>
-        <h4 style={{ marginBottom: '1rem' }}>Desempenho Individual</h4>
+        <h4 style={{ marginBottom: '1rem' }}>Desempenho por Equipe</h4>
         <div className="form-grid" style={{ marginBottom: '1rem' }}>
           <div className="form-group">
-            <label>Funcionário</label>
-            <select value={memberFilter} onChange={e => setMemberFilter(e.target.value)}>
+            <label>Equipe</label>
+            <select value={teamFilter} onChange={e => setTeamFilter(e.target.value)}>
               <option value="all">Selecione para detalhar</option>
-              {team.map(member => (
-                <option key={member.id} value={member.id}>{member.name} ({member.role === 'technician' ? 'Técnico' : 'Auxiliar'})</option>
+              {teams.map(item => (
+                <option key={item.id} value={item.id}>{item.name}</option>
               ))}
             </select>
           </div>
         </div>
-        {memberFilter === 'all' ? (
-          <p style={{ color: 'var(--text-secondary)' }}>Selecione um funcionário para metrificar limpezas, instalações e consertos no período.</p>
+        {teamFilter === 'all' ? (
+          <p style={{ color: 'var(--text-secondary)' }}>Selecione uma equipe para metrificar limpezas, instalações e consertos no período.</p>
         ) : (
           <div className="stat-grid" style={{ marginBottom: 0 }}>
-            <div className="card stat-card"><div className="stat-label">Instalações</div><div className="stat-value sm">{memberPerformance.installations}</div></div>
-            <div className="card stat-card"><div className="stat-label">Limpezas</div><div className="stat-value sm">{memberPerformance.cleanings}</div></div>
-            <div className="card stat-card"><div className="stat-label">Elétricas</div><div className="stat-value sm">{memberPerformance.electrical}</div></div>
-            <div className="card stat-card"><div className="stat-label">Consertos/Manutenção</div><div className="stat-value sm">{memberPerformance.repairs}</div></div>
+            <div className="card stat-card"><div className="stat-label">Instalações</div><div className="stat-value sm">{teamPerformance.installations}</div></div>
+            <div className="card stat-card"><div className="stat-label">Limpezas</div><div className="stat-value sm">{teamPerformance.cleanings}</div></div>
+            <div className="card stat-card"><div className="stat-label">Elétricas</div><div className="stat-value sm">{teamPerformance.electrical}</div></div>
+            <div className="card stat-card"><div className="stat-label">Consertos/Manutenção</div><div className="stat-value sm">{teamPerformance.repairs}</div></div>
           </div>
         )}
       </div>

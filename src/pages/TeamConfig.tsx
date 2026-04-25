@@ -3,7 +3,10 @@ import { supabase } from '../lib/supabase';
 import { Save, UserPlus, Trash2, Target, Calculator } from 'lucide-react';
 
 interface TeamMember {
-  id: string; name: string; role: string; fixed_cost: number; active: boolean;
+  id: string; name: string; role: string; fixed_cost: number; active: boolean; team_id?: string | null;
+}
+interface TeamItem {
+  id: string; name: string; active: boolean;
 }
 interface ServiceItem {
   id: string; name: string; base_price: number; commission_type: string; commission_value: number;
@@ -11,6 +14,7 @@ interface ServiceItem {
 
 export const TeamConfig = () => {
   const [team, setTeam] = useState<TeamMember[]>([]);
+  const [teams, setTeams] = useState<TeamItem[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [dailyTarget, setDailyTarget] = useState('600');
@@ -22,6 +26,7 @@ export const TeamConfig = () => {
   const [newName, setNewName] = useState('');
   const [newRole, setNewRole] = useState('helper');
   const [newCost, setNewCost] = useState('');
+  const [newMemberTeamId, setNewMemberTeamId] = useState('');
 
   // Novo serviço
   const [svcName, setSvcName] = useState('');
@@ -33,12 +38,14 @@ export const TeamConfig = () => {
 
   const fetchAll = async () => {
     setLoading(true);
-    const [tRes, sRes] = await Promise.all([
+    const [tRes, sRes, teamsRes] = await Promise.all([
       supabase.from('team_members').select('*').order('created_at'),
       supabase.from('service_catalog').select('*').order('created_at'),
+      supabase.from('teams').select('id, name, active').eq('active', true).order('name'),
     ]);
     if (tRes.data) setTeam(tRes.data);
     if (sRes.data) setServices(sRes.data);
+    if (teamsRes.data) setTeams(teamsRes.data as TeamItem[]);
     const today = new Date().toISOString().slice(0, 10);
     const { data: targets } = await supabase
       .from('operational_targets')
@@ -53,7 +60,8 @@ export const TeamConfig = () => {
   };
 
   const totalPayroll = team.filter(t => t.active).reduce((sum, t) => sum + Number(t.fixed_cost), 0);
-  const daysInMonth = 22; // Dias úteis
+  const now = new Date();
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const dailyPayroll = totalPayroll / daysInMonth;
   const dailyAds = Number(adsBudget);
   const dailyFixedCost = dailyPayroll + dailyAds;
@@ -62,8 +70,13 @@ export const TeamConfig = () => {
 
   const addMember = async () => {
     if (!newName || !newCost) return;
-    await supabase.from('team_members').insert({ name: newName, role: newRole, fixed_cost: parseFloat(newCost) });
-    setNewName(''); setNewCost(''); setNewRole('helper');
+    await supabase.from('team_members').insert({
+      name: newName,
+      role: newRole,
+      fixed_cost: parseFloat(newCost),
+      team_id: newMemberTeamId || null,
+    });
+    setNewName(''); setNewCost(''); setNewRole('helper'); setNewMemberTeamId('');
     fetchAll();
   };
 
@@ -81,6 +94,7 @@ export const TeamConfig = () => {
         name: member.name.trim(),
         role: member.role,
         fixed_cost: Number(member.fixed_cost),
+        team_id: member.team_id || null,
       })
       .eq('id', member.id);
     if (error) {
@@ -142,7 +156,7 @@ export const TeamConfig = () => {
     setSuccess('Metas diárias salvas com sucesso.');
   };
 
-  const updateMemberField = (id: string, field: keyof TeamMember, value: string | number | boolean) => {
+  const updateMemberField = (id: string, field: keyof TeamMember, value: string | number | boolean | null) => {
     setTeam(prev => prev.map(member => member.id === id ? { ...member, [field]: value } : member));
   };
 
@@ -213,7 +227,7 @@ export const TeamConfig = () => {
           <div className="table-scroll">
           <table className="data-table">
             <thead>
-              <tr><th>Nome</th><th>Função</th><th>Custo fixo</th><th className="col-actions" aria-label="Ações" /></tr>
+              <tr><th>Nome</th><th>Função</th><th>Equipe</th><th>Custo fixo</th><th className="col-actions" aria-label="Ações" /></tr>
             </thead>
             <tbody>
               {team.filter(t => t.active).map(t => (
@@ -224,6 +238,14 @@ export const TeamConfig = () => {
                       <option value="technician">Técnico</option>
                       <option value="helper">Ajudante</option>
                       <option value="servant">Servente</option>
+                    </select>
+                  </td>
+                  <td>
+                    <select value={t.team_id || ''} onChange={e => updateMemberField(t.id, 'team_id', e.target.value || null)}>
+                      <option value="">Sem equipe</option>
+                      {teams.map(teamItem => (
+                        <option key={teamItem.id} value={teamItem.id}>{teamItem.name}</option>
+                      ))}
                     </select>
                   </td>
                   <td>
@@ -267,6 +289,15 @@ export const TeamConfig = () => {
                   <option value="technician">Técnico</option>
                   <option value="helper">Ajudante</option>
                   <option value="servant">Servente</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Equipe</label>
+                <select value={newMemberTeamId} onChange={e => setNewMemberTeamId(e.target.value)}>
+                  <option value="">Sem equipe</option>
+                  {teams.map(teamItem => (
+                    <option key={teamItem.id} value={teamItem.id}>{teamItem.name}</option>
+                  ))}
                 </select>
               </div>
             </div>

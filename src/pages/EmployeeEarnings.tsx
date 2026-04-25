@@ -37,8 +37,10 @@ type IncomeEntry = {
   amount: number;
   category: string;
   team_member_id: string;
+  team_id?: string | null;
   metadata: Record<string, unknown> | null;
   created_at: string;
+  movement_date?: string | null;
   description: string | null;
 };
 
@@ -68,8 +70,8 @@ export const EmployeeEarnings = () => {
   }, [period, start, end]);
 
   const rangeIso = () => {
-    const s = new Date(`${start}T00:00:00`).toISOString();
-    const e = new Date(`${end}T23:59:59`).toISOString();
+    const s = start;
+    const e = end;
     return { s, e };
   };
 
@@ -82,12 +84,12 @@ export const EmployeeEarnings = () => {
         supabase.from('team_members').select('id, name, role').eq('active', true),
         supabase
           .from('finance_entries')
-          .select('id, entry_type, category, amount, team_member_id, metadata, created_at, description')
+          .select('id, entry_type, category, amount, team_member_id, team_id, metadata, created_at, movement_date, description')
           .eq('entry_type', 'income')
           .not('team_member_id', 'is', null)
-          .gte('created_at', s)
-          .lte('created_at', e)
-          .order('created_at', { ascending: false })
+          .gte('movement_date', s)
+          .lte('movement_date', e)
+          .order('movement_date', { ascending: false })
           .limit(800),
         supabase.from('service_catalog').select('id, name, commission_type, commission_value'),
       ]);
@@ -159,12 +161,19 @@ export const EmployeeEarnings = () => {
     return entries.map(row => {
       const st = getStoredCommissionParts(row.metadata);
       const sug = getSuggestedCommissionFromCatalog(row, serviceById);
+      const md = row.metadata || {};
+      const serviceNames = Array.isArray(md.services)
+        ? md.services
+            .map((item: any) => (typeof item?.service_name === 'string' ? item.service_name : null))
+            .filter((value: string | null): value is string => Boolean(value))
+        : [];
+      const serviceLabel = serviceNames.length > 0 ? serviceNames.join(', ') : (sug.service ? sug.service.name : '—');
       const team = rows.find(r => r.memberId === row.team_member_id);
       const name = team?.name || '—';
       const canApply = Boolean(sug.hasService && sug.service);
       const needsApply = canApply && st.total < 0.005 && sug.total >= 0.005;
       const drift = canApply && st.total >= 0.005 && Math.abs(st.total - sug.total) >= 0.02;
-      return { row, st, sug, name, canApply, needsApply, drift };
+      return { row, st, sug, name, canApply, needsApply, drift, serviceLabel };
     });
   }, [entries, serviceById, rows]);
 
@@ -378,16 +387,16 @@ export const EmployeeEarnings = () => {
                 </tr>
               </thead>
               <tbody>
-                {linesDetail.map(({ row, st, sug, name, canApply, needsApply, drift }) => (
+                {linesDetail.map(({ row, st, sug, name, canApply, needsApply, drift, serviceLabel }) => (
                   <tr key={row.id}>
                     <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
-                      {new Date(row.created_at).toLocaleString('pt-BR')}
+                      {row.movement_date ? new Date(`${row.movement_date}T12:00:00`).toLocaleDateString('pt-BR') : new Date(row.created_at).toLocaleString('pt-BR')}
                     </td>
                     <td style={{ fontWeight: 600 }}>{name}</td>
                     <td style={{ fontSize: '0.82rem' }}>{getFinanceCategoryLabel(row.category)}</td>
                     <td>R$ {Number(row.amount).toFixed(2)}</td>
                     <td style={{ fontSize: '0.82rem' }}>
-                      {sug.service ? sug.service.name : '—'}
+                      {serviceLabel}
                       {!canApply && (
                         <div style={{ color: 'var(--warning)', fontSize: '0.72rem' }}>Sem serviço no lançamento — edite e escolha no catálogo</div>
                       )}

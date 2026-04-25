@@ -4,12 +4,18 @@ import { ArrowUpCircle, ArrowDownCircle, Save, Pencil, Trash2, X, List, PlusCirc
 import { supabase } from '../lib/supabase';
 import { getFinanceCategoryLabel, getEntryNetAmount } from '../lib/financeLabels';
 
-interface TeamMember { id: string; name: string; role: string; }
+interface TeamMember { id: string; name: string; role: string; team_id?: string | null; }
+interface TeamItem { id: string; name: string; active: boolean; }
 interface ServiceItem {
   id: string;
   name: string;
   commission_type: 'percentage' | 'fixed';
   commission_value: number;
+}
+interface SelectedServiceItem {
+  key: string;
+  service_id: string;
+  amount: string;
 }
 type ExpenseRecurrence = 'one_time' | 'daily' | 'weekly' | 'monthly' | 'annual' | 'specific_date';
 type MainTab = 'new' | 'list';
@@ -22,6 +28,7 @@ export const FinanceInput = () => {
   const [success, setSuccess] = useState('');
   const [error, setError] = useState('');
   const [team, setTeam] = useState<TeamMember[]>([]);
+  const [teams, setTeams] = useState<TeamItem[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
   const [entries, setEntries] = useState<any[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -29,9 +36,13 @@ export const FinanceInput = () => {
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('service_revenue');
   const [description, setDescription] = useState('');
+  const [teamId, setTeamId] = useState('');
   const [teamMemberId, setTeamMemberId] = useState('');
   const [taxFee, setTaxFee] = useState('');
-  const [serviceId, setServiceId] = useState('');
+  const [movementDate, setMovementDate] = useState(new Date().toISOString().slice(0, 10));
+  const [serviceSelections, setServiceSelections] = useState<SelectedServiceItem[]>([
+    { key: crypto.randomUUID(), service_id: '', amount: '' },
+  ]);
   const [nightHours, setNightHours] = useState('');
   const [nightRate, setNightRate] = useState('');
   const [overtimeHours, setOvertimeHours] = useState('');
@@ -41,6 +52,7 @@ export const FinanceInput = () => {
 
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
   const [filterCategory, setFilterCategory] = useState('');
+  const [filterTeamId, setFilterTeamId] = useState('');
   const [filterMemberId, setFilterMemberId] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
@@ -48,16 +60,22 @@ export const FinanceInput = () => {
 
   useEffect(() => {
     fetchTeam();
+    fetchTeams();
     fetchServices();
   }, []);
 
   useEffect(() => {
     fetchEntries();
-  }, [filterType, filterCategory, filterMemberId, filterDateFrom, filterDateTo]);
+  }, [filterType, filterCategory, filterTeamId, filterMemberId, filterDateFrom, filterDateTo]);
 
   const fetchTeam = async () => {
-    const { data } = await supabase.from('team_members').select('id, name, role').eq('active', true).order('name');
+    const { data } = await supabase.from('team_members').select('id, name, role, team_id').eq('active', true).order('name');
     if (data) setTeam(data);
+  };
+
+  const fetchTeams = async () => {
+    const { data } = await supabase.from('teams').select('id, name, active').eq('active', true).order('name');
+    if (data) setTeams(data as TeamItem[]);
   };
 
   const fetchServices = async () => {
@@ -68,21 +86,23 @@ export const FinanceInput = () => {
   const fetchEntries = async () => {
     let q = supabase
       .from('finance_entries')
-      .select('id, entry_type, category, amount, tax_fee, net_amount, created_at, description, due_date, metadata, team_member_id')
+      .select('id, entry_type, category, amount, tax_fee, net_amount, created_at, movement_date, description, due_date, metadata, team_member_id, team_id')
       .order('created_at', { ascending: false })
       .limit(300);
 
     if (filterType !== 'all') q = q.eq('entry_type', filterType);
     if (filterCategory) q = q.eq('category', filterCategory);
+    if (filterTeamId) q = q.eq('team_id', filterTeamId);
     if (filterMemberId) q = q.eq('team_member_id', filterMemberId);
-    if (filterDateFrom) q = q.gte('created_at', new Date(`${filterDateFrom}T00:00:00`).toISOString());
-    if (filterDateTo) q = q.lte('created_at', new Date(`${filterDateTo}T23:59:59`).toISOString());
+    if (filterDateFrom) q = q.gte('movement_date', filterDateFrom);
+    if (filterDateTo) q = q.lte('movement_date', filterDateTo);
 
     const { data } = await q;
     if (data) setEntries(data);
   };
 
   const teamById = useMemo(() => Object.fromEntries(team.map(t => [t.id, t])), [team]);
+  const teamsById = useMemo(() => Object.fromEntries(teams.map(t => [t.id, t])), [teams]);
 
   const roleLabel = (role: string) => {
     if (role === 'technician') return 'Técnico';
@@ -100,13 +120,24 @@ export const FinanceInput = () => {
     return value;
   };
 
-  const selectedService = services.find(s => s.id === serviceId);
   const grossAmount = Number(amount || '0');
-  const computedServiceCommission = selectedService
-    ? selectedService.commission_type === 'percentage'
-      ? (grossAmount * Number(selectedService.commission_value || 0)) / 100
-      : Number(selectedService.commission_value || 0)
-    : 0;
+  const selectedServiceRows = serviceSelections
+    .map((row) => {
+      const service = services.find(s => s.id === row.service_id);
+      const amountPart = Number(row.amount || 0);
+      if (!service || amountPart <= 0) return null;
+      const commission = service.commission_type === 'percentage'
+        ? (amountPart * Number(service.commission_value || 0)) / 100
+        : Number(service.commission_value || 0);
+      return {
+        service,
+        amountPart,
+        commission,
+      };
+    })
+    .filter((row): row is { service: ServiceItem; amountPart: number; commission: number } => Boolean(row));
+  const totalServicesAmount = selectedServiceRows.reduce((sum, row) => sum + row.amountPart, 0);
+  const computedServiceCommission = selectedServiceRows.reduce((sum, row) => sum + row.commission, 0);
   const computedNight = Number(nightHours || 0) * Number(nightRate || 0);
   const computedOvertime = Number(overtimeHours || 0) * Number(overtimeRate || 0);
   const totalCommission = computedServiceCommission + computedNight + computedOvertime;
@@ -172,9 +203,11 @@ export const FinanceInput = () => {
     setEditingId(null);
     setAmount('');
     setDescription('');
+    setTeamId('');
     setTeamMemberId('');
     setTaxFee('');
-    setServiceId('');
+    setMovementDate(new Date().toISOString().slice(0, 10));
+    setServiceSelections([{ key: crypto.randomUUID(), service_id: '', amount: '' }]);
     setNightHours('');
     setNightRate('');
     setOvertimeHours('');
@@ -190,10 +223,23 @@ export const FinanceInput = () => {
     setCategory(row.category || (row.entry_type === 'income' ? 'service_revenue' : 'material_cost'));
     setAmount(String(row.amount ?? ''));
     setDescription(row.description || '');
+    setTeamId(row.team_id || '');
     setTeamMemberId(row.team_member_id || '');
+    setMovementDate(row.movement_date || new Date(row.created_at).toISOString().slice(0, 10));
     setTaxFee(row.tax_fee != null ? String(row.tax_fee) : '');
     const md = row.metadata || {};
-    setServiceId(md.service_id || '');
+    if (Array.isArray(md.services) && md.services.length > 0) {
+      const normalized = md.services.map((item: any) => ({
+        key: crypto.randomUUID(),
+        service_id: typeof item?.service_id === 'string' ? item.service_id : '',
+        amount: item?.amount != null ? String(item.amount) : '',
+      }));
+      setServiceSelections(normalized);
+    } else if (md.service_id) {
+      setServiceSelections([{ key: crypto.randomUUID(), service_id: String(md.service_id), amount: String(row.amount ?? '') }]);
+    } else {
+      setServiceSelections([{ key: crypto.randomUUID(), service_id: '', amount: '' }]);
+    }
     setNightHours(md.commission_night_hours != null ? String(md.commission_night_hours) : '');
     setNightRate(md.commission_night_rate != null ? String(md.commission_night_rate) : '');
     setOvertimeHours(md.commission_overtime_hours != null ? String(md.commission_overtime_hours) : '');
@@ -237,15 +283,27 @@ export const FinanceInput = () => {
       status: 'paid',
       metadata: {} as Record<string, unknown>,
     };
+    insertData.movement_date = movementDate || new Date().toISOString().slice(0, 10);
+    insertData.team_id = teamId || null;
     insertData.team_member_id = teamMemberId || null;
     insertData.tax_fee = taxFee ? parseFloat(taxFee) : 0;
 
-    if (entryType === 'income' && selectedService) {
+    if (entryType === 'income' && selectedServiceRows.length > 0) {
+      const serviceMetadata = selectedServiceRows.map((row) => ({
+        service_id: row.service.id,
+        service_name: row.service.name,
+        amount: Number(row.amountPart.toFixed(2)),
+        commission_type: row.service.commission_type,
+        commission_value: row.service.commission_value,
+        commission_amount: Number(row.commission.toFixed(2)),
+      }));
+      const primaryService = selectedServiceRows[0];
       insertData.metadata = {
-        service_id: selectedService.id,
-        service_name: selectedService.name,
-        commission_type: selectedService.commission_type,
-        commission_value: selectedService.commission_value,
+        services: serviceMetadata,
+        service_id: primaryService.service.id,
+        service_name: primaryService.service.name,
+        commission_type: primaryService.service.commission_type,
+        commission_value: primaryService.service.commission_value,
         commission_service_amount: Number(computedServiceCommission.toFixed(2)),
         commission_night_hours: Number(nightHours || 0),
         commission_night_rate: Number(nightRate || 0),
@@ -272,6 +330,7 @@ export const FinanceInput = () => {
       const recurrenceMetadata: Record<string, unknown> = { recurrence: expenseRecurrence };
       if (expenseRecurrence === 'specific_date' && specificDueDate) {
         insertData.due_date = specificDueDate;
+        insertData.movement_date = specificDueDate;
         recurrenceMetadata.specific_due_date = specificDueDate;
       } else {
         insertData.due_date = null;
@@ -293,6 +352,12 @@ export const FinanceInput = () => {
     try {
       if (entryType === 'expense' && expenseRecurrence === 'specific_date' && !specificDueDate) {
         throw new Error('Informe a data específica da despesa.');
+      }
+      if (!movementDate?.trim()) {
+        throw new Error('Informe a data do lançamento.');
+      }
+      if (entryType === 'income' && selectedServiceRows.length > 0 && totalServicesAmount - grossAmount > 0.01) {
+        throw new Error('A soma dos serviços não pode ser maior que o valor total.');
       }
       if (entryType === 'income' && totalCommission >= 0.01 && !teamMemberId?.trim()) {
         throw new Error(
@@ -419,45 +484,107 @@ export const FinanceInput = () => {
                     <input type="number" step="0.01" min="0.01" value={amount} onChange={e => setAmount(e.target.value)} required />
                   </div>
                   <div className="form-group">
+                    <label>Data do lançamento</label>
+                    <input type="date" value={movementDate} onChange={e => setMovementDate(e.target.value)} required />
+                  </div>
+                  <div className="form-group">
                     <label>Taxa gateway (R$) — opcional</label>
                     <input type="number" step="0.01" min="0" value={taxFee} onChange={e => setTaxFee(e.target.value)} />
                   </div>
                 </div>
 
                 <div className="form-group">
+                  <label>Equipe responsável</label>
+                  <select value={teamId} onChange={e => setTeamId(e.target.value)}>
+                    <option value="">— Não definida —</option>
+                    {teams.map(t => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="form-group">
                   <label>Funcionário responsável (comissão / responsável)</label>
-                  <select value={teamMemberId} onChange={e => setTeamMemberId(e.target.value)}>
+                  <select value={teamMemberId} onChange={e => {
+                    const nextId = e.target.value;
+                    setTeamMemberId(nextId);
+                    const member = team.find(m => m.id === nextId);
+                    if (member?.team_id) setTeamId(member.team_id);
+                  }}>
                     <option value="">— Nenhum —</option>
-                    {team.map(t => (
+                    {team
+                      .filter(t => !teamId || t.team_id === teamId)
+                      .map(t => (
                       <option key={t.id} value={t.id}>{t.name} ({roleLabel(t.role)})</option>
                     ))}
                   </select>
                 </div>
 
                 {entryType === 'income' && (
-                  <div className="form-group">
-                    <label>Serviço do catálogo (comissão)</label>
-                    <select value={serviceId} onChange={e => setServiceId(e.target.value)}>
-                      <option value="">— Sem comissão por serviço —</option>
-                      {services.map(service => (
-                        <option key={service.id} value={service.id}>
-                          {service.name} ({service.commission_type === 'percentage' ? `${service.commission_value}%` : `R$ ${Number(service.commission_value).toFixed(2)}`})
-                        </option>
-                      ))}
-                    </select>
+                  <div className="card" style={{ padding: '1rem' }}>
+                    <h4 style={{ marginBottom: '0.75rem' }}>Serviços do catálogo (múltiplos)</h4>
+                    {serviceSelections.map((row) => (
+                      <div key={row.key} className="form-grid" style={{ alignItems: 'end', marginBottom: '0.5rem' }}>
+                        <div className="form-group">
+                          <label>Serviço</label>
+                          <select
+                            value={row.service_id}
+                            onChange={e =>
+                              setServiceSelections(prev => prev.map(item => item.key === row.key ? { ...item, service_id: e.target.value } : item))
+                            }
+                          >
+                            <option value="">— Sem serviço —</option>
+                            {services.map(service => (
+                              <option key={service.id} value={service.id}>
+                                {service.name} ({service.commission_type === 'percentage' ? `${service.commission_value}%` : `R$ ${Number(service.commission_value).toFixed(2)}`})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label>Valor do serviço (R$)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={row.amount}
+                            onChange={e =>
+                              setServiceSelections(prev => prev.map(item => item.key === row.key ? { ...item, amount: e.target.value } : item))
+                            }
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-danger"
+                          onClick={() => setServiceSelections(prev => prev.length > 1 ? prev.filter(item => item.key !== row.key) : prev)}
+                        >
+                          Remover
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-secondary"
+                      onClick={() => setServiceSelections(prev => [...prev, { key: crypto.randomUUID(), service_id: '', amount: '' }])}
+                    >
+                      + Adicionar serviço
+                    </button>
+                    <p style={{ marginTop: '0.5rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                      Soma dos serviços: R$ {totalServicesAmount.toFixed(2)} · Valor total: R$ {grossAmount.toFixed(2)}
+                    </p>
                   </div>
                 )}
 
                 {entryType === 'income' && selectedMember && (
                   <div className="card" style={{ padding: '1rem', borderLeft: '3px solid var(--accent)' }}>
                     <h4 style={{ marginBottom: '0.5rem' }}>Prévia de ganhos — {selectedMember.name}</h4>
-                    {!serviceId ? (
+                    {selectedServiceRows.length === 0 ? (
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: 0 }}>
-                        Escolha um <strong>serviço do catálogo</strong> para calcular a comissão sobre o valor. Adicione noturno/hora extra abaixo se aplicável.
+                        Escolha um ou mais <strong>serviços do catálogo</strong> para calcular a comissão sobre os valores. Adicione noturno/hora extra abaixo se aplicável.
                       </p>
                     ) : (
                       <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>
-                        Serviço: <strong>{selectedService?.name}</strong> · Valor bruto R$ {grossAmount.toFixed(2)}
+                        {selectedServiceRows.length} serviço(s) selecionado(s) · Valor bruto R$ {grossAmount.toFixed(2)}
                       </p>
                     )}
                     <div style={{ fontSize: '0.88rem', lineHeight: 1.7 }}>
@@ -573,10 +700,19 @@ export const FinanceInput = () => {
               </select>
             </div>
             <div className="form-group">
+              <label>Equipe</label>
+              <select value={filterTeamId} onChange={e => setFilterTeamId(e.target.value)}>
+                <option value="">Todas</option>
+                {teams.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
               <label>Funcionário</label>
               <select value={filterMemberId} onChange={e => setFilterMemberId(e.target.value)}>
                 <option value="">Todos</option>
-                {team.map(t => (
+                {team.filter(t => !filterTeamId || t.team_id === filterTeamId).map(t => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
               </select>
@@ -647,6 +783,7 @@ export const FinanceInput = () => {
                 <tr>
                   <th>Tipo</th>
                   <th>Categoria</th>
+                  <th>Equipe</th>
                   <th>Funcionário</th>
                   <th>Valor</th>
                   <th>Comissão</th>
@@ -657,7 +794,7 @@ export const FinanceInput = () => {
               </thead>
               <tbody>
                 {filteredRows.length === 0 ? (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '2rem' }}>Nenhum lançamento encontrado.</td></tr>
+                  <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '2rem' }}>Nenhum lançamento encontrado.</td></tr>
                 ) : filteredRows.map((e: any) => {
                   const tax = Number(e.tax_fee) || 0;
                   const gross = Number(e.amount) || 0;
@@ -667,10 +804,12 @@ export const FinanceInput = () => {
                   const mem = e.metadata || {};
                   const comm = e.entry_type === 'income' ? Number(mem.commission_total) || 0 : null;
                   const tm = e.team_member_id ? teamById[e.team_member_id] : null;
+                  const t = e.team_id ? teamsById[e.team_id] : null;
                   return (
                     <tr key={e.id}>
                       <td><span className={`tag ${e.entry_type === 'income' ? 'tag-income' : 'tag-expense'}`}>{e.entry_type === 'income' ? 'Receita' : 'Despesa'}</span></td>
                       <td style={{ fontWeight: 600 }}>{getFinanceCategoryLabel(e.category)}</td>
+                      <td style={{ fontSize: '0.82rem' }}>{t ? t.name : '—'}</td>
                       <td style={{ fontSize: '0.82rem' }}>{tm ? `${tm.name}` : '—'}</td>
                       <td>
                         <div style={{ fontWeight: 600 }}>R$ {net.toFixed(2)}{e.entry_type === 'income' && tax > 0 ? ' líq.' : ''}</div>
@@ -683,7 +822,9 @@ export const FinanceInput = () => {
                         {e.entry_type === 'expense' ? recurrence : '—'}
                         {dueDateLabel && <div style={{ color: 'var(--text-secondary)' }}>Venc. {dueDateLabel}</div>}
                       </td>
-                      <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>{new Date(e.created_at).toLocaleString('pt-BR')}</td>
+                      <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
+                        {e.movement_date ? new Date(`${e.movement_date}T12:00:00`).toLocaleDateString('pt-BR') : new Date(e.created_at).toLocaleString('pt-BR')}
+                      </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                           <button type="button" className="btn btn-sm btn-secondary" onClick={() => loadEntryForEdit(e)}><Pencil size={14} /></button>
