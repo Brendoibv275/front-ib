@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { ArrowUpCircle, ArrowDownCircle, Save, Pencil, Trash2, X, List, PlusCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getFinanceCategoryLabel, getEntryNetAmount } from '../lib/financeLabels';
+import { formatYmdPtBr, toDateTimeYmd, todayYmd } from '../lib/date';
+import { DEFAULT_APP_SETTINGS, loadSettingsContext, resolveCosts, type SettingsContext } from '../lib/appSettings';
 
 interface TeamMember { id: string; name: string; role: string; team_id?: string | null; }
 interface TeamItem { id: string; name: string; active: boolean; }
@@ -39,7 +41,7 @@ export const FinanceInput = () => {
   const [teamId, setTeamId] = useState('');
   const [teamMemberId, setTeamMemberId] = useState('');
   const [taxFee, setTaxFee] = useState('');
-  const [movementDate, setMovementDate] = useState(new Date().toISOString().slice(0, 10));
+  const [movementDate, setMovementDate] = useState(todayYmd());
   const [serviceSelections, setServiceSelections] = useState<SelectedServiceItem[]>([
     { key: crypto.randomUUID(), service_id: '', amount: '' },
   ]);
@@ -49,6 +51,11 @@ export const FinanceInput = () => {
   const [overtimeRate, setOvertimeRate] = useState('');
   const [expenseRecurrence, setExpenseRecurrence] = useState<ExpenseRecurrence>('one_time');
   const [specificDueDate, setSpecificDueDate] = useState('');
+  const [settingsContext, setSettingsContext] = useState<SettingsContext>({
+    app: DEFAULT_APP_SETTINGS,
+    teamCostMap: {},
+    memberCostMap: {},
+  });
 
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all');
   const [filterCategory, setFilterCategory] = useState('');
@@ -62,7 +69,20 @@ export const FinanceInput = () => {
     fetchTeam();
     fetchTeams();
     fetchServices();
+    loadSettingsContext(supabase).then(setSettingsContext);
   }, []);
+
+  useEffect(() => {
+    if (editingId || entryType !== 'expense') return;
+    if (amount.trim()) return;
+    const resolved = resolveCosts(settingsContext, { teamId: teamId || null, teamMemberId: teamMemberId || null });
+    if (category === 'logistics_lunch' && Number(resolved.lunchAmount) > 0) {
+      setAmount(String(resolved.lunchAmount));
+    }
+    if (category === 'fixed_payroll' && Number(resolved.dailyAmount) > 0) {
+      setAmount(String(resolved.dailyAmount));
+    }
+  }, [amount, category, editingId, entryType, settingsContext, teamId, teamMemberId]);
 
   useEffect(() => {
     fetchEntries();
@@ -87,6 +107,7 @@ export const FinanceInput = () => {
     let q = supabase
       .from('finance_entries')
       .select('id, entry_type, category, amount, tax_fee, net_amount, created_at, movement_date, description, due_date, metadata, team_member_id, team_id')
+      .order('movement_date', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(300);
 
@@ -206,7 +227,7 @@ export const FinanceInput = () => {
     setTeamId('');
     setTeamMemberId('');
     setTaxFee('');
-    setMovementDate(new Date().toISOString().slice(0, 10));
+    setMovementDate(todayYmd());
     setServiceSelections([{ key: crypto.randomUUID(), service_id: '', amount: '' }]);
     setNightHours('');
     setNightRate('');
@@ -225,7 +246,7 @@ export const FinanceInput = () => {
     setDescription(row.description || '');
     setTeamId(row.team_id || '');
     setTeamMemberId(row.team_member_id || '');
-    setMovementDate(row.movement_date || new Date(row.created_at).toISOString().slice(0, 10));
+    setMovementDate(toDateTimeYmd(row.movement_date || row.created_at));
     setTaxFee(row.tax_fee != null ? String(row.tax_fee) : '');
     const md = row.metadata || {};
     if (Array.isArray(md.services) && md.services.length > 0) {
@@ -283,7 +304,7 @@ export const FinanceInput = () => {
       status: 'paid',
       metadata: {} as Record<string, unknown>,
     };
-    insertData.movement_date = movementDate || new Date().toISOString().slice(0, 10);
+    insertData.movement_date = movementDate || todayYmd();
     insertData.team_id = teamId || null;
     insertData.team_member_id = teamMemberId || null;
     insertData.tax_fee = taxFee ? parseFloat(taxFee) : 0;
@@ -823,7 +844,7 @@ export const FinanceInput = () => {
                         {dueDateLabel && <div style={{ color: 'var(--text-secondary)' }}>Venc. {dueDateLabel}</div>}
                       </td>
                       <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
-                        {e.movement_date ? new Date(`${e.movement_date}T12:00:00`).toLocaleDateString('pt-BR') : new Date(e.created_at).toLocaleString('pt-BR')}
+                        {e.movement_date ? formatYmdPtBr(e.movement_date) : new Date(e.created_at).toLocaleString('pt-BR')}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>

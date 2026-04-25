@@ -9,6 +9,8 @@ import {
   getSuggestedCommissionFromCatalog,
   mergeCatalogCommissionIntoMetadata,
 } from '../lib/commissionRecalc';
+import { formatYmdPtBr, shiftDaysYmd, todayYmd } from '../lib/date';
+import { clampByCompanyStart, DEFAULT_APP_SETTINGS, loadAppSettings } from '../lib/appSettings';
 
 interface TeamMember {
   id: string;
@@ -55,13 +57,18 @@ export const EmployeeEarnings = () => {
   const [applyingId, setApplyingId] = useState<string | null>(null);
   const [bulkApplying, setBulkApplying] = useState(false);
   const [actionMsg, setActionMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
+  const [companyStartDate, setCompanyStartDate] = useState(DEFAULT_APP_SETTINGS.company_start_date);
 
   useEffect(() => {
     const now = new Date();
-    const d = new Date();
-    d.setDate(now.getDate() - 30);
-    setStart(d.toISOString().slice(0, 10));
-    setEnd(now.toISOString().slice(0, 10));
+    const rawStart = shiftDaysYmd(now, -30);
+    const safeStart = rawStart < companyStartDate ? companyStartDate : rawStart;
+    setStart(safeStart);
+    setEnd(todayYmd());
+  }, [companyStartDate]);
+
+  useEffect(() => {
+    loadAppSettings(supabase).then((cfg) => setCompanyStartDate(cfg.company_start_date || DEFAULT_APP_SETTINGS.company_start_date));
   }, []);
 
   useEffect(() => {
@@ -79,7 +86,8 @@ export const EmployeeEarnings = () => {
     setLoading(true);
     setActionMsg(null);
     try {
-      const { s, e } = rangeIso();
+      const requested = rangeIso();
+      const { startYmd: s, endYmd: e } = clampByCompanyStart(requested.s, requested.e, companyStartDate);
       const [{ data: teamRows }, { data: entryRows }, { data: catalogRows }] = await Promise.all([
         supabase.from('team_members').select('id, name, role').eq('active', true),
         supabase
@@ -244,14 +252,14 @@ export const EmployeeEarnings = () => {
                 const now = new Date();
                 if (p === 'week') {
                   const a = new Date();
-                  a.setDate(now.getDate() - 7);
-                  setStart(a.toISOString().slice(0, 10));
-                  setEnd(now.toISOString().slice(0, 10));
+                  const safeStart = shiftDaysYmd(a, -7);
+                  setStart(safeStart < companyStartDate ? companyStartDate : safeStart);
+                  setEnd(todayYmd());
                 } else if (p === 'month') {
                   const a = new Date();
-                  a.setDate(now.getDate() - 30);
-                  setStart(a.toISOString().slice(0, 10));
-                  setEnd(now.toISOString().slice(0, 10));
+                  const safeStart = shiftDaysYmd(a, -30);
+                  setStart(safeStart < companyStartDate ? companyStartDate : safeStart);
+                  setEnd(todayYmd());
                 }
               }}
             >
@@ -264,7 +272,12 @@ export const EmployeeEarnings = () => {
             <>
               <div className="form-group">
                 <label>Início</label>
-                <input type="date" value={start} onChange={e => setStart(e.target.value)} />
+                <input
+                  type="date"
+                  value={start}
+                  min={companyStartDate}
+                  onChange={e => setStart(e.target.value < companyStartDate ? companyStartDate : e.target.value)}
+                />
               </div>
               <div className="form-group">
                 <label>Fim</label>
@@ -390,7 +403,7 @@ export const EmployeeEarnings = () => {
                 {linesDetail.map(({ row, st, sug, name, canApply, needsApply, drift, serviceLabel }) => (
                   <tr key={row.id}>
                     <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>
-                      {row.movement_date ? new Date(`${row.movement_date}T12:00:00`).toLocaleDateString('pt-BR') : new Date(row.created_at).toLocaleString('pt-BR')}
+                      {row.movement_date ? formatYmdPtBr(row.movement_date) : new Date(row.created_at).toLocaleString('pt-BR')}
                     </td>
                     <td style={{ fontWeight: 600 }}>{name}</td>
                     <td style={{ fontSize: '0.82rem' }}>{getFinanceCategoryLabel(row.category)}</td>

@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, TrendingDown, Target, Zap, DollarSign, Users, CalendarCheck } from 'lucide-react';
 import { getEntryNetAmount } from '../lib/financeLabels';
+import { dayEndIsoFromYmd, dayStartIsoFromYmd, formatDateYmd, shiftDaysYmd, toDateTimeYmd, todayYmd } from '../lib/date';
+import { clampByCompanyStart, DEFAULT_APP_SETTINGS, loadSettingsContext, resolveCosts } from '../lib/appSettings';
 
 interface Metrics {
   grossRevenue: number;
@@ -45,6 +47,7 @@ export const Dashboard = () => {
   const [customEnd, setCustomEnd] = useState('');
   const [teams, setTeams] = useState<TeamItem[]>([]);
   const [teamFilter, setTeamFilter] = useState('all');
+  const [companyStartDate, setCompanyStartDate] = useState(DEFAULT_APP_SETTINGS.company_start_date);
   const [teamPerformance, setTeamPerformance] = useState({ installations: 0, cleanings: 0, electrical: 0, repairs: 0, total: 0 });
   const [metrics, setMetrics] = useState<Metrics>({
     grossRevenue: 0, netRevenueAfterFees: 0, totalIncomeFees: 0, totalCommissions: 0, totalExpenses: 0,
@@ -56,10 +59,8 @@ export const Dashboard = () => {
 
   useEffect(() => {
     const now = new Date();
-    const monthAgo = new Date();
-    monthAgo.setDate(now.getDate() - 30);
-    setCustomStart(monthAgo.toISOString().slice(0, 10));
-    setCustomEnd(now.toISOString().slice(0, 10));
+    setCustomStart(shiftDaysYmd(now, -30));
+    setCustomEnd(todayYmd());
     fetchTeams();
   }, []);
 
@@ -70,22 +71,17 @@ export const Dashboard = () => {
 
   const getDateRange = () => {
     const now = new Date();
-    const start = new Date();
     if (period === 'today') {
-      start.setHours(0, 0, 0, 0);
-      return { start: start.toISOString(), end: now.toISOString() };
+      const current = todayYmd();
+      return { startYmd: current, endYmd: current };
     }
     if (period === 'week') {
-      start.setDate(now.getDate() - 7);
-      return { start: start.toISOString(), end: now.toISOString() };
+      return { startYmd: shiftDaysYmd(now, -7), endYmd: todayYmd() };
     }
     if (period === 'month') {
-      start.setDate(now.getDate() - 30);
-      return { start: start.toISOString(), end: now.toISOString() };
+      return { startYmd: shiftDaysYmd(now, -30), endYmd: todayYmd() };
     }
-    const customStartDate = new Date(`${customStart}T00:00:00`);
-    const customEndDate = new Date(`${customEnd}T23:59:59`);
-    return { start: customStartDate.toISOString(), end: customEndDate.toISOString() };
+    return { startYmd: customStart, endYmd: customEnd };
   };
 
   const fetchTeams = async () => {
@@ -116,15 +112,22 @@ export const Dashboard = () => {
   const fetchAll = async () => {
     setLoading(true);
     try {
-      const { start, end } = getDateRange();
-      const targetDate = period === 'custom' ? customStart : new Date().toISOString().slice(0, 10);
-      const startDate = new Date(start);
-      const endDate = new Date(end);
+      const requested = getDateRange();
+      const settingsContext = await loadSettingsContext(supabase);
+      setCompanyStartDate(settingsContext.app.company_start_date || DEFAULT_APP_SETTINGS.company_start_date);
+      const clamped = clampByCompanyStart(requested.startYmd, requested.endYmd, settingsContext.app.company_start_date);
+      const rangeStartIso = dayStartIsoFromYmd(clamped.startYmd);
+      const rangeEndIso = dayEndIsoFromYmd(clamped.endYmd);
+      const targetDate = period === 'custom'
+        ? (customStart < settingsContext.app.company_start_date ? settingsContext.app.company_start_date : customStart)
+        : todayYmd();
+      const startDate = new Date(`${clamped.startYmd}T00:00:00`);
+      const endDate = new Date(`${clamped.endYmd}T00:00:00`);
       const [finRes, leadsRes, apptRes, targetRes, membersRes] = await Promise.all([
-        supabase.from('finance_entries').select('*').gte('movement_date', start.slice(0, 10)).lte('movement_date', end.slice(0, 10)),
-        supabase.from('leads').select('id, stage, created_at').gte('created_at', start).lte('created_at', end),
-        supabase.from('appointments').select('id, status, created_at').gte('created_at', start).lte('created_at', end),
-        supabase.from('operational_targets').select('daily_profit_target, daily_ads_budget').eq('target_date', targetDate).maybeSingle(),
+        supabase.from('finance_entries').select('*').gte('movement_date', clamped.startYmd).lte('movement_date', clamped.endYmd),
+        supabase.from('leads').select('id, stage, created_at').gte('created_at', rangeStartIso).lte('created_at', rangeEndIso),
+        supabase.from('appointments').select('id, status, created_at').gte('created_at', rangeStartIso).lte('created_at', rangeEndIso),
+        supabase.from('operational_targets').select('daily_profit_target, daily_ads_budget').gte('target_date', clamped.startYmd).lte('target_date', clamped.endYmd),
         supabase.from('team_members').select('id, team_id, fixed_cost, active').eq('active', true),
       ]);
 
@@ -135,8 +138,16 @@ export const Dashboard = () => {
       const leads = leadsRes.data || [];
       const appts = apptRes.data || [];
       const activeMembers = (membersRes.data || []) as TeamMemberCost[];
-      const configuredTarget = Number(targetRes.data?.daily_profit_target || 600);
-      const configuredDailyAds = Number(targetRes.data?.daily_ads_budget || 0);
+      const scopedDefaults = resolveCosts(settingsContext, {
+        teamId: teamFilter !== 'all' ? teamFilter : null,
+      });
+      const targetRows = Array.isArray(targetRes.data) ? targetRes.data : [];
+      const configuredTarget = targetRows.length > 0
+        ? targetRows.reduce((sum: number, row: any) => sum + Number(row.daily_profit_target || 0), 0) / targetRows.length
+        : Number(scopedDefaults.dailyTarget ?? DEFAULT_APP_SETTINGS.default_daily_profit_target);
+      const configuredDailyAds = targetRows.length > 0
+        ? targetRows.reduce((sum: number, row: any) => sum + Number(row.daily_ads_budget || 0), 0) / targetRows.length
+        : Number(scopedDefaults.adsBudget ?? DEFAULT_APP_SETTINGS.default_daily_ads_budget);
       let gross = 0;
       let netRev = 0;
       let incomeFees = 0;
@@ -151,17 +162,13 @@ export const Dashboard = () => {
       let proratedPayroll = 0;
       const monthlyPayrollEntries: any[] = [];
       const dailyMap: Record<string, { revenueNet: number; expense: number; commissions: number }> = {};
-      const localDateKey = (input: string) => {
-        const d = new Date(`${input}T12:00:00`);
-        return d.toISOString().slice(0, 10);
-      };
-      const dayLabel = (dateKey: string) => new Date(`${dateKey}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+      const dayLabel = (dateKey: string) =>
+        new Date(`${dateKey}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 
       entries.forEach((e: any) => {
         const val = Number(e.amount) || 0;
         const tax = Number(e.tax_fee) || 0;
-        const movementDate = typeof e.movement_date === 'string' ? e.movement_date : new Date(e.created_at).toISOString().slice(0, 10);
-        const day = localDateKey(movementDate);
+        const day = toDateTimeYmd(typeof e.movement_date === 'string' ? e.movement_date : e.created_at);
         if (!dailyMap[day]) dailyMap[day] = { revenueNet: 0, expense: 0, commissions: 0 };
 
         if (e.entry_type === 'income') {
@@ -208,7 +215,7 @@ export const Dashboard = () => {
         : activeMembers.filter((member) => member.team_id === teamFilter);
       const payrollMonthlyTotal = membersForCost.reduce((sum, member) => sum + (Number(member.fixed_cost) || 0), 0);
       iterateDays(startDate, endDate, (dt) => {
-        const dateKey = dt.toISOString().slice(0, 10);
+        const dateKey = formatDateYmd(dt);
         if (!dailyMap[dateKey]) dailyMap[dateKey] = { revenueNet: 0, expense: 0, commissions: 0 };
         const daysInMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
         const payrollPerDay = payrollMonthlyTotal / daysInMonth;
@@ -233,7 +240,7 @@ export const Dashboard = () => {
         if (effectiveStart > effectiveEnd) return;
         const perDay = amount / daysInMonth;
         iterateDays(effectiveStart, effectiveEnd, (dt) => {
-          const key = dt.toISOString().slice(0, 10);
+          const key = formatDateYmd(dt);
           if (!dailyMap[key]) dailyMap[key] = { revenueNet: 0, expense: 0, commissions: 0 };
           dailyMap[key].expense += perDay;
           proratedPayroll += perDay;
@@ -312,11 +319,21 @@ export const Dashboard = () => {
           <div className="form-grid">
             <div className="form-group">
               <label>Data início</label>
-              <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)} />
+              <input
+                type="date"
+                min={companyStartDate}
+                value={customStart}
+                onChange={e => setCustomStart(e.target.value < companyStartDate ? companyStartDate : e.target.value)}
+              />
             </div>
             <div className="form-group">
               <label>Data fim</label>
-              <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)} />
+              <input
+                type="date"
+                min={companyStartDate}
+                value={customEnd}
+                onChange={e => setCustomEnd(e.target.value < companyStartDate ? companyStartDate : e.target.value)}
+              />
             </div>
           </div>
         </div>
@@ -516,7 +533,7 @@ export const Dashboard = () => {
             <span className="detail-value text-danger">- R$ {metrics.materialCost.toFixed(2)}</span>
           </div>
           <div className="detail-row">
-            <span className="detail-label">Folha de pagamento</span>
+            <span className="detail-label">Folha de pagamento (rateio mensal + lançamentos)</span>
             <span className="detail-value text-danger">- R$ {metrics.payrollCost.toFixed(2)}</span>
           </div>
           <div className="detail-row">

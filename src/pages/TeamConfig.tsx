@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { Save, UserPlus, Trash2, Target, Calculator } from 'lucide-react';
+import { todayYmd } from '../lib/date';
+import { DEFAULT_APP_SETTINGS, loadAppSettings } from '../lib/appSettings';
 
 interface TeamMember {
   id: string; name: string; role: string; fixed_cost: number; active: boolean; team_id?: string | null;
@@ -46,7 +48,10 @@ export const TeamConfig = () => {
     if (tRes.data) setTeam(tRes.data);
     if (sRes.data) setServices(sRes.data);
     if (teamsRes.data) setTeams(teamsRes.data as TeamItem[]);
-    const today = new Date().toISOString().slice(0, 10);
+    const settings = await loadAppSettings(supabase);
+    setDailyTarget(String(settings.default_daily_profit_target || DEFAULT_APP_SETTINGS.default_daily_profit_target));
+    setAdsBudget(String(settings.default_daily_ads_budget || DEFAULT_APP_SETTINGS.default_daily_ads_budget));
+    const today = todayYmd();
     const { data: targets } = await supabase
       .from('operational_targets')
       .select('daily_ads_budget, daily_profit_target')
@@ -143,7 +148,7 @@ export const TeamConfig = () => {
   const saveTargets = async () => {
     setSaveError('');
     setSuccess('');
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayYmd();
     const { error } = await supabase.from('operational_targets').upsert({
       target_date: today,
       daily_ads_budget: Number(adsBudget || '0'),
@@ -168,7 +173,7 @@ export const TeamConfig = () => {
     <div className="page page-team-config">
       <div className="page-header">
         <h2>Equipe, Metas & Comissões</h2>
-        <p>Gerencie o custo fixo da equipe, catálogo de serviços e validação da meta diária</p>
+        <p>Gerencie custo-base mensal da equipe (salário/diária operacional), catálogo de serviços e validação da meta diária</p>
       </div>
 
       {/* VALIDAÇÃO DE META */}
@@ -194,7 +199,7 @@ export const TeamConfig = () => {
             <div className="sim-kpi-val">R$ {totalPayroll.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
           </div>
           <div>
-            <div className="stat-label">Folha / dia ({daysInMonth} úteis)</div>
+            <div className="stat-label">Folha / dia ({daysInMonth} dias corridos)</div>
             <div className="sim-kpi-val">R$ {dailyPayroll.toFixed(2)}</div>
           </div>
           <div>
@@ -227,7 +232,7 @@ export const TeamConfig = () => {
           <div className="table-scroll">
           <table className="data-table">
             <thead>
-              <tr><th>Nome</th><th>Função</th><th>Equipe</th><th>Custo fixo</th><th className="col-actions" aria-label="Ações" /></tr>
+              <tr><th>Nome</th><th>Função</th><th>Equipe</th><th>Custo base mensal</th><th className="col-actions" aria-label="Ações" /></tr>
             </thead>
             <tbody>
               {team.filter(t => t.active).map(t => (
@@ -302,9 +307,12 @@ export const TeamConfig = () => {
               </div>
             </div>
             <div className="form-group" style={{ marginTop: '0.45rem' }}>
-              <label>Custo fixo mensal (R$)</label>
+              <label>Custo base mensal (R$)</label>
               <input type="number" placeholder="4000.00" value={newCost} onChange={e => setNewCost(e.target.value)} />
             </div>
+            <p className="help-text" style={{ marginTop: '0.45rem' }}>
+              Esse valor compõe a folha mensal e é rateado automaticamente por dia no Dashboard.
+            </p>
             <button type="button" className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={addMember}><UserPlus size={15} /> Adicionar</button>
           </div>
         </div>
