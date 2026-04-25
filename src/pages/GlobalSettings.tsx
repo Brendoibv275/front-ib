@@ -21,7 +21,11 @@ interface TeamMember {
   team_id?: string | null;
 }
 
-export const GlobalSettings = () => {
+interface GlobalSettingsProps {
+  embedded?: boolean;
+}
+
+export const GlobalSettings = ({ embedded = false }: GlobalSettingsProps) => {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_APP_SETTINGS);
   const [teams, setTeams] = useState<TeamItem[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -127,12 +131,14 @@ export const GlobalSettings = () => {
     setSaving(false);
   };
 
-  return (
-    <div className="page">
-      <div className="page-header">
-        <h2>Configurações Gerais</h2>
-        <p>Parametrize custos padrão da operação sem editar código.</p>
-      </div>
+  const content = (
+    <>
+      {!embedded && (
+        <div className="page-header">
+          <h2>Configurações Gerais</h2>
+          <p>Parametrize custos padrão da operação sem editar código.</p>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: '1rem' }}>
         {loading ? (
@@ -353,6 +359,12 @@ export const GlobalSettings = () => {
           </>
         )}
       </div>
-    </div>
+    </>
   );
+
+  if (embedded) {
+    return <div>{content}</div>;
+  }
+
+  return <div className="page">{content}</div>;
 };

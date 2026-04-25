@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Save, UserPlus, Trash2, Target, Calculator } from 'lucide-react';
+import { Save, UserPlus, Trash2, Target, Calculator, SlidersHorizontal, Users } from 'lucide-react';
 import { todayYmd } from '../lib/date';
 import { DEFAULT_APP_SETTINGS, loadAppSettings } from '../lib/appSettings';
+import { GlobalSettings } from './GlobalSettings';
 
 interface TeamMember {
   id: string; name: string; role: string; fixed_cost: number; active: boolean; team_id?: string | null;
@@ -15,6 +16,7 @@ interface ServiceItem {
 }
 
 export const TeamConfig = () => {
+  const [section, setSection] = useState<'operations' | 'settings'>('operations');
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [teams, setTeams] = useState<TeamItem[]>([]);
   const [services, setServices] = useState<ServiceItem[]>([]);
@@ -172,10 +174,31 @@ export const TeamConfig = () => {
   return (
     <div className="page page-team-config">
       <div className="page-header">
-        <h2>Equipe, Metas & Comissões</h2>
-        <p>Gerencie custo-base mensal da equipe (salário/diária operacional), catálogo de serviços e validação da meta diária</p>
+        <h2>Operação Financeira</h2>
+        <p>Gerencie equipe, metas, catálogo e configurações avançadas em um único fluxo.</p>
       </div>
 
+      <div className="toggle-tabs" style={{ marginBottom: '1rem' }}>
+        <button
+          type="button"
+          className={`toggle-tab ${section === 'operations' ? 'active-income' : ''}`}
+          onClick={() => setSection('operations')}
+          style={{ borderColor: section === 'operations' ? 'var(--success)' : undefined }}
+        >
+          <Users size={16} /> Equipe & Metas
+        </button>
+        <button
+          type="button"
+          className={`toggle-tab ${section === 'settings' ? 'active-expense' : ''}`}
+          onClick={() => setSection('settings')}
+          style={{ borderColor: section === 'settings' ? 'var(--accent)' : undefined }}
+        >
+          <SlidersHorizontal size={16} /> Configurações avançadas
+        </button>
+      </div>
+
+      {section === 'operations' && (
+        <>
       {/* VALIDAÇÃO DE META */}
       <div className="card" style={{ marginBottom: '1rem', borderLeft: dailyMargin >= 0 ? '3px solid var(--success)' : '3px solid var(--danger)' }}>
         <div className="sim-header">
@@ -387,6 +410,12 @@ export const TeamConfig = () => {
       {loading && <p style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>Carregando equipe e catálogo...</p>}
       {saveError && <div className="alert alert-danger" style={{ marginTop: '1rem' }}>{saveError}</div>}
       {success && <div className="alert alert-success" style={{ marginTop: '1rem' }}>{success}</div>}
+        </>
+      )}
+
+      {section === 'settings' && (
+        <GlobalSettings embedded />
+      )}
     </div>
   );
 };

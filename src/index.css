@@ -326,12 +326,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 /* ─── MOBILE BOTTOM NAV ─── */
 .bottom-nav {
   display: none;
-  position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 300;
   background: var(--bg-secondary);
   border-top: 1px solid var(--border);
-  padding: 0.4rem 0.25rem 0.6rem;
+  padding: 0.35rem 0.25rem calc(0.6rem + env(safe-area-inset-bottom));
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
 }
 .bottom-nav-inner {
   display: flex;
@@ -353,14 +354,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--accent); box-sha
 .bottom-nav-item svg { width: 22px; height: 22px; }
 
 /* ─── RESPONSIVE (MOBILE) ─── */
-@media (max-width: 900px) {
+@media (max-width: 1024px) {
   #root { flex-direction: column; }
 
   .sidebar { display: none !important; }
   .mobile-topbar { display: flex; }
   .bottom-nav { display: block; }
 
-  .main { padding-bottom: 4.75rem; } /* Space for bottom nav (5 items) */
+  .main { padding-bottom: calc(5.2rem + env(safe-area-inset-bottom)); } /* espaço para nav inferior */
 
   .bottom-nav-inner { max-width: 100%; padding: 0 0.1rem; }
   .bottom-nav-item { padding: 0.2rem 0.3rem; font-size: 0.58rem; }

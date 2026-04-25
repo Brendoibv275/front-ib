@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
-import { LayoutDashboard, Wallet, Users, Bot, CalendarCheck, ShieldCheck, LogOut, Menu, X, CircleDollarSign, ClipboardCheck, Settings2 } from 'lucide-react';
+import { LayoutDashboard, Wallet, Users, Bot, CalendarCheck, ShieldCheck, LogOut, Menu, X, CircleDollarSign, ClipboardCheck } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import { Dashboard } from './pages/Dashboard';
 import { FinanceInput } from './pages/FinanceInput';
@@ -10,7 +10,6 @@ import { AppointmentsPanel } from './pages/AppointmentsPanel';
 import { UserManagement } from './pages/UserManagement';
 import { EmployeeEarnings } from './pages/EmployeeEarnings';
 import { AttendancePanel } from './pages/AttendancePanel';
-import { GlobalSettings } from './pages/GlobalSettings';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import './index.css';
@@ -31,9 +30,8 @@ const navSections = [
   {
     label: 'Operação',
     items: [
-      { path: '/team', label: 'Equipe & Metas', icon: <Users size={18} /> },
+      { path: '/team', label: 'Equipe, Metas & Config', icon: <Users size={18} /> },
       { path: '/attendance', label: 'Frequência', icon: <ClipboardCheck size={18} /> },
-      { path: '/settings', label: 'Configurações', icon: <Settings2 size={18} /> },
       { path: '/leads', label: 'Leads (SDR IA)', icon: <Bot size={18} /> },
       { path: '/appointments', label: 'Agendamentos', icon: <CalendarCheck size={18} /> },
     ]
@@ -44,7 +42,7 @@ const bottomNavItems = [
   { path: '/', label: 'Início', icon: <LayoutDashboard /> },
   { path: '/finance', label: 'Lançar', icon: <Wallet /> },
   { path: '/earnings', label: 'Ganhos', icon: <CircleDollarSign /> },
-  { path: '/leads', label: 'Leads', icon: <Bot /> },
+  { path: '/team', label: 'Equipe', icon: <Users /> },
   { path: '/appointments', label: 'Agenda', icon: <CalendarCheck /> },
 ];
 
@@ -158,7 +156,7 @@ function AppRoutes({ profile }: { profile: UserProfile }) {
       <Route path="/earnings" element={<EmployeeEarnings />} />
       <Route path="/team" element={<TeamConfig />} />
       <Route path="/attendance" element={<AttendancePanel />} />
-      <Route path="/settings" element={<GlobalSettings />} />
+      <Route path="/settings" element={<Navigate to="/team" replace />} />
       <Route path="/leads" element={<LeadsPanel />} />
       <Route path="/appointments" element={<AppointmentsPanel />} />
       {profile.role === 'admin' && <Route path="/users" element={<UserManagement />} />}
