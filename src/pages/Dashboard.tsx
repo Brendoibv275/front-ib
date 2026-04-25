@@ -29,6 +29,13 @@ interface TeamItem {
   active: boolean;
 }
 
+interface TeamMemberCost {
+  id: string;
+  team_id?: string | null;
+  fixed_cost: number;
+  active: boolean;
+}
+
 type QuickPeriod = 'today' | 'week' | 'month' | 'custom';
 
 export const Dashboard = () => {
@@ -113,11 +120,12 @@ export const Dashboard = () => {
       const targetDate = period === 'custom' ? customStart : new Date().toISOString().slice(0, 10);
       const startDate = new Date(start);
       const endDate = new Date(end);
-      const [finRes, leadsRes, apptRes, targetRes] = await Promise.all([
+      const [finRes, leadsRes, apptRes, targetRes, membersRes] = await Promise.all([
         supabase.from('finance_entries').select('*').gte('movement_date', start.slice(0, 10)).lte('movement_date', end.slice(0, 10)),
         supabase.from('leads').select('id, stage, created_at').gte('created_at', start).lte('created_at', end),
         supabase.from('appointments').select('id, status, created_at').gte('created_at', start).lte('created_at', end),
-        supabase.from('operational_targets').select('daily_profit_target').eq('target_date', targetDate).maybeSingle(),
+        supabase.from('operational_targets').select('daily_profit_target, daily_ads_budget').eq('target_date', targetDate).maybeSingle(),
+        supabase.from('team_members').select('id, team_id, fixed_cost, active').eq('active', true),
       ]);
 
       let entries = finRes.data || [];
@@ -126,7 +134,9 @@ export const Dashboard = () => {
       }
       const leads = leadsRes.data || [];
       const appts = apptRes.data || [];
+      const activeMembers = (membersRes.data || []) as TeamMemberCost[];
       const configuredTarget = Number(targetRes.data?.daily_profit_target || 600);
+      const configuredDailyAds = Number(targetRes.data?.daily_ads_budget || 0);
       let gross = 0;
       let netRev = 0;
       let incomeFees = 0;
@@ -190,6 +200,23 @@ export const Dashboard = () => {
           current.setDate(current.getDate() + 1);
         }
       };
+
+      // Custo fixo base vindo de "Equipe & Metas": folha mensal (rateio diário) + ads diário.
+      // Isso garante que o dashboard reflita perda diária mesmo sem lançamentos manuais.
+      const membersForCost = teamFilter === 'all'
+        ? activeMembers
+        : activeMembers.filter((member) => member.team_id === teamFilter);
+      const payrollMonthlyTotal = membersForCost.reduce((sum, member) => sum + (Number(member.fixed_cost) || 0), 0);
+      iterateDays(startDate, endDate, (dt) => {
+        const dateKey = dt.toISOString().slice(0, 10);
+        if (!dailyMap[dateKey]) dailyMap[dateKey] = { revenueNet: 0, expense: 0, commissions: 0 };
+        const daysInMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+        const payrollPerDay = payrollMonthlyTotal / daysInMonth;
+        payroll += payrollPerDay;
+        ads += configuredDailyAds;
+        totalExpAll += payrollPerDay + configuredDailyAds;
+        dailyMap[dateKey].expense += payrollPerDay + configuredDailyAds;
+      });
 
       monthlyPayrollEntries.forEach((entry: any) => {
         const amount = Number(entry.amount) || 0;
