@@ -167,10 +167,12 @@ export const AttendancePanel = () => {
   const saveRow = async (row: AttendanceRow) => {
     setSavingId(row.id);
     setMessage(null);
+    const member = membersMap[row.team_member_id];
+    const normalizedTeamId = member?.team_id || row.team_id || null;
     const payload = {
       attendance_date: row.attendance_date,
       team_member_id: row.team_member_id,
-      team_id: row.team_id || null,
+      team_id: normalizedTeamId,
       status: row.status,
       include_daily: Boolean(row.include_daily),
       include_lunch: Boolean(row.include_lunch),
@@ -217,6 +219,7 @@ export const AttendancePanel = () => {
 
     const nowIso = new Date().toISOString();
     const inserts: any[] = [];
+    let missingTeamCount = 0;
 
     for (const row of presentRows) {
       const member = membersMap[row.team_member_id];
@@ -236,6 +239,10 @@ export const AttendancePanel = () => {
         ? Number(row.lunch_amount)
         : Number(scoped.lunchAmount || 0);
       const teamId = row.team_id || member.team_id || null;
+      if (!teamId) {
+        missingTeamCount += 1;
+        continue;
+      }
       const baseMetadata = {
         source: 'attendance',
         attendance_id: row.id,
@@ -288,8 +295,8 @@ export const AttendancePanel = () => {
     setMessage({
       type: 'ok',
       text: inserts.length > 0
-        ? `${inserts.length} despesa(s) gerada(s) com sucesso.`
-        : 'Nenhuma nova despesa gerada. Itens já estavam lançados.',
+        ? `${inserts.length} despesa(s) gerada(s) com sucesso.${missingTeamCount > 0 ? ` ${missingTeamCount} presença(s) sem equipe vinculada foram ignoradas.` : ''}`
+        : `Nenhuma nova despesa gerada.${missingTeamCount > 0 ? ` ${missingTeamCount} presença(s) sem equipe vinculada foram ignoradas.` : ' Itens já estavam lançados.'}`,
     });
     await fetchRows();
     setGenerating(false);

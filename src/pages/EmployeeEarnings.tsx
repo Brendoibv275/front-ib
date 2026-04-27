@@ -40,6 +40,7 @@ type IncomeEntry = {
   category: string;
   team_member_id: string;
   team_id?: string | null;
+  status?: string | null;
   metadata: Record<string, unknown> | null;
   created_at: string;
   movement_date?: string | null;
@@ -92,7 +93,7 @@ export const EmployeeEarnings = () => {
         supabase.from('team_members').select('id, name, role').eq('active', true),
         supabase
           .from('finance_entries')
-          .select('id, entry_type, category, amount, team_member_id, team_id, metadata, created_at, movement_date, description')
+          .select('id, entry_type, category, amount, status, team_member_id, team_id, metadata, created_at, movement_date, description')
           .eq('entry_type', 'income')
           .not('team_member_id', 'is', null)
           .gte('movement_date', s)
@@ -396,6 +397,7 @@ export const EmployeeEarnings = () => {
                   <th>Serviço (lançamento)</th>
                   <th>Com. gravada</th>
                   <th>Sugestão (catálogo)</th>
+                  <th>Status</th>
                   <th></th>
                 </tr>
               </thead>
@@ -418,6 +420,11 @@ export const EmployeeEarnings = () => {
                     <td>
                       {canApply ? `R$ ${sug.total.toFixed(2)}` : '—'}
                       {drift && <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>difere do gravado</div>}
+                    </td>
+                    <td style={{ fontSize: '0.78rem' }}>
+                      <span className={`tag ${row.status === 'paid' ? 'tag-paid' : 'tag-pending'}`}>
+                        {row.status === 'paid' ? 'Pago' : 'Dívida'}
+                      </span>
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button

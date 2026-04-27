@@ -33,10 +33,10 @@ export function dayEndIsoFromYmd(ymd: string): string {
 }
 
 export function toDateTimeYmd(value: string | null | undefined): string {
-  if (!value) return todayYmd();
+  if (!value) return '';
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return todayYmd();
+  if (Number.isNaN(parsed.getTime())) return '';
   return formatDateYmd(parsed);
 }
 

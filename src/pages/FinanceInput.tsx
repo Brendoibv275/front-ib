@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { ArrowUpCircle, ArrowDownCircle, Save, Pencil, Trash2, X, List, PlusCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getFinanceCategoryLabel, getEntryNetAmount } from '../lib/financeLabels';
-import { formatYmdPtBr, toDateTimeYmd, todayYmd } from '../lib/date';
+import { formatYmdPtBr, todayYmd } from '../lib/date';
 import { DEFAULT_APP_SETTINGS, loadSettingsContext, resolveCosts, type SettingsContext } from '../lib/appSettings';
 
 interface TeamMember { id: string; name: string; role: string; team_id?: string | null; }
@@ -42,6 +42,7 @@ export const FinanceInput = () => {
   const [teamMemberId, setTeamMemberId] = useState('');
   const [taxFee, setTaxFee] = useState('');
   const [movementDate, setMovementDate] = useState(todayYmd());
+  const [includeDebt, setIncludeDebt] = useState(false);
   const [serviceSelections, setServiceSelections] = useState<SelectedServiceItem[]>([
     { key: crypto.randomUUID(), service_id: '', amount: '' },
   ]);
@@ -106,7 +107,7 @@ export const FinanceInput = () => {
   const fetchEntries = async () => {
     let q = supabase
       .from('finance_entries')
-      .select('id, entry_type, category, amount, tax_fee, net_amount, created_at, movement_date, description, due_date, metadata, team_member_id, team_id')
+      .select('id, entry_type, category, amount, tax_fee, net_amount, status, created_at, movement_date, description, due_date, metadata, team_member_id, team_id')
       .order('movement_date', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(300);
@@ -164,6 +165,32 @@ export const FinanceInput = () => {
   const totalCommission = computedServiceCommission + computedNight + computedOvertime;
 
   const selectedMember = teamMemberId ? teamById[teamMemberId] : null;
+  const parseMovementDate = (value: unknown): string => {
+    if (typeof value !== 'string') return '';
+    return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : '';
+  };
+
+  useEffect(() => {
+    if (!teamMemberId) return;
+    const member = teamById[teamMemberId];
+    if (!member) {
+      setTeamMemberId('');
+      return;
+    }
+    const memberTeamId = member.team_id || '';
+    if (memberTeamId && teamId !== memberTeamId) {
+      setTeamId(memberTeamId);
+    }
+  }, [teamById, teamId, teamMemberId]);
+
+  useEffect(() => {
+    if (!teamId || !teamMemberId) return;
+    const member = teamById[teamMemberId];
+    if (!member) return;
+    if ((member.team_id || '') !== teamId) {
+      setTeamMemberId('');
+    }
+  }, [teamById, teamId, teamMemberId]);
 
   const filteredRows = useMemo(() => {
     const q = filterSearch.trim().toLowerCase();
@@ -228,6 +255,7 @@ export const FinanceInput = () => {
     setTeamMemberId('');
     setTaxFee('');
     setMovementDate(todayYmd());
+    setIncludeDebt(false);
     setServiceSelections([{ key: crypto.randomUUID(), service_id: '', amount: '' }]);
     setNightHours('');
     setNightRate('');
@@ -244,9 +272,13 @@ export const FinanceInput = () => {
     setCategory(row.category || (row.entry_type === 'income' ? 'service_revenue' : 'material_cost'));
     setAmount(String(row.amount ?? ''));
     setDescription(row.description || '');
-    setTeamId(row.team_id || '');
-    setTeamMemberId(row.team_member_id || '');
-    setMovementDate(toDateTimeYmd(row.movement_date || row.created_at));
+    const memberId = row.team_member_id || '';
+    const member = memberId ? teamById[memberId] : null;
+    setTeamMemberId(memberId);
+    setTeamId(row.team_id || member?.team_id || '');
+    const normalizedMovementDate = parseMovementDate(row.movement_date);
+    setMovementDate(normalizedMovementDate || todayYmd());
+    setIncludeDebt((row.status || 'paid') !== 'paid');
     setTaxFee(row.tax_fee != null ? String(row.tax_fee) : '');
     const md = row.metadata || {};
     if (Array.isArray(md.services) && md.services.length > 0) {
@@ -296,16 +328,19 @@ export const FinanceInput = () => {
   }, [searchParams, setSearchParams]);
 
   const buildPayload = () => {
+    const member = teamMemberId ? teamById[teamMemberId] : null;
+    const normalizedMovementDate = parseMovementDate(movementDate);
+    const payloadTeamId = member?.team_id || teamId || null;
     const insertData: any = {
       entry_type: entryType,
       category,
       amount: parseFloat(amount),
       description: description || null,
-      status: 'paid',
+      status: includeDebt ? 'pending' : 'paid',
       metadata: {} as Record<string, unknown>,
     };
-    insertData.movement_date = movementDate || todayYmd();
-    insertData.team_id = teamId || null;
+    insertData.movement_date = normalizedMovementDate || todayYmd();
+    insertData.team_id = payloadTeamId;
     insertData.team_member_id = teamMemberId || null;
     insertData.tax_fee = taxFee ? parseFloat(taxFee) : 0;
 
@@ -356,9 +391,10 @@ export const FinanceInput = () => {
       } else {
         insertData.due_date = null;
       }
-      insertData.metadata = { ...insertData.metadata, ...recurrenceMetadata };
+      insertData.metadata = { ...insertData.metadata, ...recurrenceMetadata, include_debt: includeDebt };
     } else {
       insertData.due_date = null;
+      insertData.metadata = { ...insertData.metadata, include_debt: includeDebt };
     }
 
     return insertData;
@@ -377,6 +413,10 @@ export const FinanceInput = () => {
       if (!movementDate?.trim()) {
         throw new Error('Informe a data do lançamento.');
       }
+      const normalizedMovementDate = parseMovementDate(movementDate);
+      if (!normalizedMovementDate) {
+        throw new Error('A data do lançamento é inválida. Use o formato AAAA-MM-DD.');
+      }
       if (entryType === 'income' && selectedServiceRows.length > 0 && totalServicesAmount - grossAmount > 0.01) {
         throw new Error('A soma dos serviços não pode ser maior que o valor total.');
       }
@@ -384,6 +424,18 @@ export const FinanceInput = () => {
         throw new Error(
           'Receitas com comissão precisam ter um funcionário vinculado. Selecione o profissional responsável.'
         );
+      }
+      if (teamMemberId) {
+        const member = teamById[teamMemberId];
+        if (!member) {
+          throw new Error('Funcionário selecionado não foi encontrado. Atualize a página e tente novamente.');
+        }
+        if (!member.team_id) {
+          throw new Error('Funcionário selecionado está sem equipe vinculada. Ajuste em Equipe & Metas antes de salvar.');
+        }
+        if (teamId && member.team_id !== teamId) {
+          throw new Error('Funcionário e equipe estão divergentes. Selecione uma combinação válida.');
+        }
       }
 
       const payload = buildPayload();
@@ -516,7 +568,15 @@ export const FinanceInput = () => {
 
                 <div className="form-group">
                   <label>Equipe responsável</label>
-                  <select value={teamId} onChange={e => setTeamId(e.target.value)}>
+                  <select value={teamId} onChange={e => {
+                    const nextTeamId = e.target.value;
+                    setTeamId(nextTeamId);
+                    if (!teamMemberId) return;
+                    const member = teamById[teamMemberId];
+                    if (member && (member.team_id || '') !== nextTeamId) {
+                      setTeamMemberId('');
+                    }
+                  }}>
                     <option value="">— Não definida —</option>
                     {teams.map(t => (
                       <option key={t.id} value={t.id}>{t.name}</option>
@@ -529,7 +589,7 @@ export const FinanceInput = () => {
                   <select value={teamMemberId} onChange={e => {
                     const nextId = e.target.value;
                     setTeamMemberId(nextId);
-                    const member = team.find(m => m.id === nextId);
+                    const member = nextId ? teamById[nextId] : null;
                     if (member?.team_id) setTeamId(member.team_id);
                   }}>
                     <option value="">— Nenhum —</option>
@@ -672,6 +732,16 @@ export const FinanceInput = () => {
                   <label>Descrição</label>
                   <textarea rows={3} value={description} onChange={e => setDescription(e.target.value)} />
                 </div>
+                <div className="form-group">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: 0 }}>
+                    <input
+                      type="checkbox"
+                      checked={includeDebt}
+                      onChange={e => setIncludeDebt(e.target.checked)}
+                    />
+                    Incluir como {entryType === 'income' ? 'recebível (dívida a receber)' : 'dívida (a pagar)'}
+                  </label>
+                </div>
 
                 <button type="submit" className={`btn btn-block ${entryType === 'income' ? 'btn-success' : 'btn-danger'}`} disabled={loading}>
                   <Save size={18} /> {loading ? 'Salvando...' : editingId ? 'Atualizar lançamento' : entryType === 'income' ? 'Registrar receita' : 'Registrar despesa'}
@@ -808,6 +878,7 @@ export const FinanceInput = () => {
                   <th>Funcionário</th>
                   <th>Valor</th>
                   <th>Comissão</th>
+                  <th>Status</th>
                   <th>Período</th>
                   <th>Data</th>
                   <th></th>
@@ -815,7 +886,7 @@ export const FinanceInput = () => {
               </thead>
               <tbody>
                 {filteredRows.length === 0 ? (
-                  <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '2rem' }}>Nenhum lançamento encontrado.</td></tr>
+                  <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '2rem' }}>Nenhum lançamento encontrado.</td></tr>
                 ) : filteredRows.map((e: any) => {
                   const tax = Number(e.tax_fee) || 0;
                   const gross = Number(e.amount) || 0;
@@ -840,11 +911,16 @@ export const FinanceInput = () => {
                       </td>
                       <td style={{ fontSize: '0.82rem' }}>{comm != null && e.entry_type === 'income' ? `R$ ${comm.toFixed(2)}` : '—'}</td>
                       <td style={{ fontSize: '0.78rem' }}>
+                        <span className={`tag ${e.status === 'paid' ? 'tag-paid' : 'tag-pending'}`}>
+                          {e.status === 'paid' ? 'Pago' : 'Dívida'}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: '0.78rem' }}>
                         {e.entry_type === 'expense' ? recurrence : '—'}
                         {dueDateLabel && <div style={{ color: 'var(--text-secondary)' }}>Venc. {dueDateLabel}</div>}
                       </td>
                       <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>
-                        {e.movement_date ? formatYmdPtBr(e.movement_date) : new Date(e.created_at).toLocaleString('pt-BR')}
+                        {parseMovementDate(e.movement_date) ? formatYmdPtBr(e.movement_date) : 'Data inválida'}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>

@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, TrendingDown, Target, Zap, DollarSign, Users, CalendarCheck } from 'lucide-react';
 import { getEntryNetAmount } from '../lib/financeLabels';
-import { dayEndIsoFromYmd, dayStartIsoFromYmd, formatDateYmd, shiftDaysYmd, toDateTimeYmd, todayYmd } from '../lib/date';
+import { dayEndIsoFromYmd, dayStartIsoFromYmd, formatDateYmd, shiftDaysYmd, todayYmd } from '../lib/date';
 import { clampByCompanyStart, DEFAULT_APP_SETTINGS, loadSettingsContext, resolveCosts } from '../lib/appSettings';
 
 interface Metrics {
@@ -18,11 +18,15 @@ interface Metrics {
   payrollCost: number;
   taxExpenseCost: number;
   otherExpenseCost: number;
+  pendingIncomeAmount: number;
+  pendingExpenseAmount: number;
   netProfit: number;
   commissionsWithoutMember: number;
   totalLeads: number;
   scheduledVisits: number;
   dailyTarget: number;
+  targetDays: number;
+  targetPeriodTotal: number;
 }
 
 interface TeamItem {
@@ -48,12 +52,13 @@ export const Dashboard = () => {
   const [teams, setTeams] = useState<TeamItem[]>([]);
   const [teamFilter, setTeamFilter] = useState('all');
   const [companyStartDate, setCompanyStartDate] = useState(DEFAULT_APP_SETTINGS.company_start_date);
+  const [invalidMovementCount, setInvalidMovementCount] = useState(0);
   const [teamPerformance, setTeamPerformance] = useState({ installations: 0, cleanings: 0, electrical: 0, repairs: 0, total: 0 });
   const [metrics, setMetrics] = useState<Metrics>({
     grossRevenue: 0, netRevenueAfterFees: 0, totalIncomeFees: 0, totalCommissions: 0, totalExpenses: 0,
     adsCost: 0, logisticsCost: 0, materialCost: 0, payrollCost: 0,
-    taxExpenseCost: 0, otherExpenseCost: 0, netProfit: 0, commissionsWithoutMember: 0,
-    totalLeads: 0, scheduledVisits: 0, dailyTarget: 600
+    taxExpenseCost: 0, otherExpenseCost: 0, pendingIncomeAmount: 0, pendingExpenseAmount: 0, netProfit: 0, commissionsWithoutMember: 0,
+    totalLeads: 0, scheduledVisits: 0, dailyTarget: 600, targetDays: 1, targetPeriodTotal: 600
   });
   const [chartData, setChartData] = useState<any[]>([]);
 
@@ -142,12 +147,16 @@ export const Dashboard = () => {
         teamId: teamFilter !== 'all' ? teamFilter : null,
       });
       const targetRows = Array.isArray(targetRes.data) ? targetRes.data : [];
-      const configuredTarget = targetRows.length > 0
-        ? targetRows.reduce((sum: number, row: any) => sum + Number(row.daily_profit_target || 0), 0) / targetRows.length
-        : Number(scopedDefaults.dailyTarget ?? DEFAULT_APP_SETTINGS.default_daily_profit_target);
-      const configuredDailyAds = targetRows.length > 0
-        ? targetRows.reduce((sum: number, row: any) => sum + Number(row.daily_ads_budget || 0), 0) / targetRows.length
-        : Number(scopedDefaults.adsBudget ?? DEFAULT_APP_SETTINGS.default_daily_ads_budget);
+      const configuredTarget = teamFilter !== 'all'
+        ? Number(scopedDefaults.dailyTarget ?? DEFAULT_APP_SETTINGS.default_daily_profit_target)
+        : targetRows.length > 0
+          ? targetRows.reduce((sum: number, row: any) => sum + Number(row.daily_profit_target || 0), 0) / targetRows.length
+          : Number(scopedDefaults.dailyTarget ?? DEFAULT_APP_SETTINGS.default_daily_profit_target);
+      const configuredDailyAds = teamFilter !== 'all'
+        ? Number(scopedDefaults.adsBudget ?? DEFAULT_APP_SETTINGS.default_daily_ads_budget)
+        : targetRows.length > 0
+          ? targetRows.reduce((sum: number, row: any) => sum + Number(row.daily_ads_budget || 0), 0) / targetRows.length
+          : Number(scopedDefaults.adsBudget ?? DEFAULT_APP_SETTINGS.default_daily_ads_budget);
       let gross = 0;
       let netRev = 0;
       let incomeFees = 0;
@@ -157,21 +166,33 @@ export const Dashboard = () => {
       let payroll = 0;
       let taxExp = 0;
       let totalExpAll = 0;
+      let pendingIncomeAmount = 0;
+      let pendingExpenseAmount = 0;
       let totalCommissions = 0;
       let commissionsWithoutMember = 0;
       let proratedPayroll = 0;
       const monthlyPayrollEntries: any[] = [];
       const dailyMap: Record<string, { revenueNet: number; expense: number; commissions: number }> = {};
+      const payrollDaysWithEntries = new Set<string>();
+      const adsDaysWithEntries = new Set<string>();
+      let invalidMovementDateCount = 0;
       const dayLabel = (dateKey: string) =>
         new Date(`${dateKey}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
 
       entries.forEach((e: any) => {
         const val = Number(e.amount) || 0;
         const tax = Number(e.tax_fee) || 0;
-        const day = toDateTimeYmd(typeof e.movement_date === 'string' ? e.movement_date : e.created_at);
+        const day = typeof e.movement_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.movement_date)
+          ? e.movement_date
+          : '';
+        if (!day) {
+          invalidMovementDateCount += 1;
+          return;
+        }
         if (!dailyMap[day]) dailyMap[day] = { revenueNet: 0, expense: 0, commissions: 0 };
 
         if (e.entry_type === 'income') {
+          if (e.status && e.status !== 'paid') pendingIncomeAmount += val;
           gross += val;
           incomeFees += tax;
           const netLine = getEntryNetAmount(e);
@@ -184,17 +205,24 @@ export const Dashboard = () => {
             if (!e.team_member_id) commissionsWithoutMember += 1;
           }
         } else {
+          if (e.status && e.status !== 'paid') pendingExpenseAmount += val;
           const isMonthlyProrated = e.category === 'fixed_payroll' && Boolean(e.metadata?.is_monthly_prorated);
           if (isMonthlyProrated) {
-            monthlyPayrollEntries.push(e);
+            monthlyPayrollEntries.push({ ...e, _movement_day: day });
             return;
           }
           totalExpAll += val;
           dailyMap[day].expense += val;
-          if (e.category === 'marketing_ads') ads += val;
+          if (e.category === 'marketing_ads') {
+            ads += val;
+            adsDaysWithEntries.add(day);
+          }
           else if (e.category?.startsWith('logistics')) logistics += val;
           else if (e.category === 'material_cost') material += val;
-          else if (e.category === 'fixed_payroll') payroll += val;
+          else if (e.category === 'fixed_payroll') {
+            payroll += val;
+            payrollDaysWithEntries.add(day);
+          }
           else if (e.category === 'tax') taxExp += val;
         }
       });
@@ -214,22 +242,27 @@ export const Dashboard = () => {
         ? activeMembers
         : activeMembers.filter((member) => member.team_id === teamFilter);
       const payrollMonthlyTotal = membersForCost.reduce((sum, member) => sum + (Number(member.fixed_cost) || 0), 0);
+      const hasMonthlyPayrollLaunches = monthlyPayrollEntries.length > 0;
       iterateDays(startDate, endDate, (dt) => {
         const dateKey = formatDateYmd(dt);
         if (!dailyMap[dateKey]) dailyMap[dateKey] = { revenueNet: 0, expense: 0, commissions: 0 };
-        const daysInMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
-        const payrollPerDay = payrollMonthlyTotal / daysInMonth;
-        payroll += payrollPerDay;
-        ads += configuredDailyAds;
-        totalExpAll += payrollPerDay + configuredDailyAds;
-        dailyMap[dateKey].expense += payrollPerDay + configuredDailyAds;
+        if (!hasMonthlyPayrollLaunches && !payrollDaysWithEntries.has(dateKey) && payrollMonthlyTotal > 0) {
+          const daysInMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
+          const payrollPerDay = payrollMonthlyTotal / daysInMonth;
+          payroll += payrollPerDay;
+          totalExpAll += payrollPerDay;
+          dailyMap[dateKey].expense += payrollPerDay;
+        }
+        if (!adsDaysWithEntries.has(dateKey) && configuredDailyAds > 0) {
+          ads += configuredDailyAds;
+          totalExpAll += configuredDailyAds;
+          dailyMap[dateKey].expense += configuredDailyAds;
+        }
       });
 
       monthlyPayrollEntries.forEach((entry: any) => {
         const amount = Number(entry.amount) || 0;
-        const movementDate = typeof entry.movement_date === 'string'
-          ? new Date(`${entry.movement_date}T12:00:00`)
-          : new Date(entry.created_at);
+        const movementDate = new Date(`${entry._movement_day}T12:00:00`);
         const year = movementDate.getFullYear();
         const month = movementDate.getMonth();
         const monthStart = new Date(year, month, 1);
@@ -253,6 +286,9 @@ export const Dashboard = () => {
       const otherExp = Math.max(0, totalExpAll - bucketSum);
       const net = netRev - totalExpAll - totalCommissions;
       const scheduled = appts.filter((a: any) => a.status === 'proposed' || a.status === 'confirmed').length;
+      const targetDays = Math.max(1, Math.floor((endDate.getTime() - startDate.getTime()) / 86400000) + 1);
+      const targetPeriodTotal = configuredTarget * targetDays;
+      setInvalidMovementCount(invalidMovementDateCount);
 
       setMetrics({
         grossRevenue: gross,
@@ -266,11 +302,15 @@ export const Dashboard = () => {
         payrollCost: payroll,
         taxExpenseCost: taxExp,
         otherExpenseCost: otherExp,
+        pendingIncomeAmount,
+        pendingExpenseAmount,
         netProfit: net,
         commissionsWithoutMember,
         totalLeads: leads.length,
         scheduledVisits: scheduled,
         dailyTarget: configuredTarget,
+        targetDays,
+        targetPeriodTotal,
       });
 
       const chart = Object.entries(dailyMap)
@@ -287,12 +327,13 @@ export const Dashboard = () => {
       calcPerformance(entries);
     } catch (err) {
       console.error(err);
+      setInvalidMovementCount(0);
     } finally {
       setLoading(false);
     }
   };
 
-  const hitTarget = metrics.netRevenueAfterFees >= metrics.dailyTarget;
+  const hitTarget = metrics.netRevenueAfterFees >= metrics.targetPeriodTotal;
 
   return (
     <div className="page">
@@ -358,17 +399,20 @@ export const Dashboard = () => {
             Bruto R$ {metrics.grossRevenue.toFixed(2)}
             {metrics.totalIncomeFees > 0 ? ` · Taxas R$ ${metrics.totalIncomeFees.toFixed(2)}` : ''}
             {metrics.totalCommissions > 0 ? ` · Comissões R$ ${metrics.totalCommissions.toFixed(2)}` : ''}
+            {metrics.pendingIncomeAmount > 0 ? ` · Recebível R$ ${metrics.pendingIncomeAmount.toFixed(2)}` : ''}
           </div>
         </div>
 
         <div className="card stat-card" style={{ borderLeft: hitTarget ? '3px solid var(--success)' : '3px solid var(--warning)' }}>
           <Target size={80} className="stat-icon" />
-          <div className="stat-label">Meta do dia (R$ {metrics.dailyTarget}) · receita líquida</div>
+          <div className="stat-label">
+            Meta do período ({metrics.targetDays} dia{metrics.targetDays !== 1 ? 's' : ''}) · R$ {metrics.targetPeriodTotal.toFixed(2)}
+          </div>
           <div className={`stat-value sm ${hitTarget ? 'text-success' : 'text-warning'}`}>
             {hitTarget ? 'Atingida' : 'Pendente'}
           </div>
           <div className="stat-sub" style={{ color: 'var(--text-secondary)' }}>
-            Falta R$ {Math.max(0, metrics.dailyTarget - metrics.netRevenueAfterFees).toFixed(2)}
+            Referência diária: R$ {metrics.dailyTarget.toFixed(2)} · Falta R$ {Math.max(0, metrics.targetPeriodTotal - metrics.netRevenueAfterFees).toFixed(2)}
           </div>
         </div>
 
@@ -378,6 +422,11 @@ export const Dashboard = () => {
           <div className="stat-value sm text-danger">R$ {metrics.adsCost.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</div>
         </div>
       </div>
+      {invalidMovementCount > 0 && (
+        <div className="alert alert-danger" style={{ marginBottom: '1rem' }}>
+          {invalidMovementCount} lançamento(s) sem data de competência válida foram ignorados no dashboard. Corrija em Lançamentos.
+        </div>
+      )}
 
       <div className="stat-grid" style={{ marginBottom: '1.5rem' }}>
         <div className="card stat-card">
@@ -533,7 +582,7 @@ export const Dashboard = () => {
             <span className="detail-value text-danger">- R$ {metrics.materialCost.toFixed(2)}</span>
           </div>
           <div className="detail-row">
-            <span className="detail-label">Folha de pagamento (rateio mensal + lançamentos)</span>
+            <span className="detail-label">Folha de pagamento (lançamentos + provisão quando faltante)</span>
             <span className="detail-value text-danger">- R$ {metrics.payrollCost.toFixed(2)}</span>
           </div>
           <div className="detail-row">
@@ -550,6 +599,14 @@ export const Dashboard = () => {
             <span className="detail-label">Total de despesas</span>
             <span className="detail-value">R$ {metrics.totalExpenses.toFixed(2)}</span>
           </div>
+          {(metrics.pendingIncomeAmount > 0 || metrics.pendingExpenseAmount > 0) && (
+            <div className="detail-row" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+              <span className="detail-label">Dívidas no período (receber / pagar)</span>
+              <span className="detail-value">
+                R$ {metrics.pendingIncomeAmount.toFixed(2)} / R$ {metrics.pendingExpenseAmount.toFixed(2)}
+              </span>
+            </div>
+          )}
           <div className="detail-row" style={{ borderTop: '2px solid var(--accent)', paddingTop: '1rem', marginTop: '0.5rem' }}>
             <span className="detail-label" style={{ fontWeight: 700, color: 'var(--text-primary)' }}>Lucro líquido real</span>
             <span className={`detail-value ${metrics.netProfit >= 0 ? 'text-success' : 'text-danger'}`} style={{ fontSize: '1.2rem' }}>
