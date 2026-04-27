@@ -3,10 +3,10 @@ import { useSearchParams } from 'react-router-dom';
 import { ArrowUpCircle, ArrowDownCircle, Save, Pencil, Trash2, X, List, PlusCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getFinanceCategoryLabel, getEntryNetAmount } from '../lib/financeLabels';
-import { formatYmdPtBr, todayYmd } from '../lib/date';
+import { formatYmdPtBr, getBusinessDayFactorFromYmd, getMonthBusinessUnitsFromYmd, todayYmd } from '../lib/date';
 import { DEFAULT_APP_SETTINGS, loadSettingsContext, resolveCosts, type SettingsContext } from '../lib/appSettings';
 
-interface TeamMember { id: string; name: string; role: string; team_id?: string | null; }
+interface TeamMember { id: string; name: string; role: string; team_id?: string | null; fixed_cost?: number | null; }
 interface TeamItem { id: string; name: string; active: boolean; }
 interface ServiceItem {
   id: string;
@@ -89,8 +89,13 @@ export const FinanceInput = () => {
     fetchEntries();
   }, [filterType, filterCategory, filterTeamId, filterMemberId, filterDateFrom, filterDateTo]);
 
+  useEffect(() => {
+    if (!team.length || !teams.length) return;
+    fetchEntries();
+  }, [team.length, teams.length, settingsContext.app.company_start_date]);
+
   const fetchTeam = async () => {
-    const { data } = await supabase.from('team_members').select('id, name, role, team_id').eq('active', true).order('name');
+    const { data } = await supabase.from('team_members').select('id, name, role, team_id, fixed_cost').eq('active', true).order('name');
     if (data) setTeam(data);
   };
 
@@ -105,6 +110,102 @@ export const FinanceInput = () => {
   };
 
   const fetchEntries = async () => {
+    const ensureAutoFixedCosts = async (startYmd: string, endYmd: string) => {
+      const start = new Date(`${startYmd}T00:00:00`);
+      const end = new Date(`${endYmd}T00:00:00`);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
+      if (start > end) return;
+      if (!teams.length && !team.length) return;
+
+      const { data: existingEntries } = await supabase
+        .from('finance_entries')
+        .select('metadata')
+        .eq('entry_type', 'expense')
+        .gte('movement_date', startYmd)
+        .lte('movement_date', endYmd);
+
+      const existingAutoKeys = new Set<string>();
+      (existingEntries || []).forEach((entry: any) => {
+        if (entry?.metadata?.source === 'auto_fixed_cost' && typeof entry?.metadata?.auto_key === 'string') {
+          existingAutoKeys.add(entry.metadata.auto_key);
+        }
+      });
+
+      const inserts: any[] = [];
+      const nowIso = new Date().toISOString();
+      const dt = new Date(start);
+      while (dt <= end) {
+        const dateKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+        const factor = getBusinessDayFactorFromYmd(dateKey);
+        if (factor > 0) {
+          for (const member of team) {
+            if (!member.team_id) continue;
+            const monthlyCost = Number(member.fixed_cost || 0);
+            if (monthlyCost <= 0) continue;
+            const monthUnits = getMonthBusinessUnitsFromYmd(dateKey);
+            if (monthUnits <= 0) continue;
+            const amount = (monthlyCost / monthUnits) * factor;
+            const autoKey = `auto_fixed_payroll:${member.id}:${dateKey}`;
+            if (existingAutoKeys.has(autoKey)) continue;
+            inserts.push({
+              entry_type: 'expense',
+              category: 'fixed_payroll',
+              amount: Number(amount.toFixed(2)),
+              status: 'pending',
+              team_id: member.team_id,
+              team_member_id: member.id,
+              movement_date: dateKey,
+              description: `Folha diária automática - ${member.name}`,
+              metadata: {
+                source: 'auto_fixed_cost',
+                auto_kind: 'payroll',
+                auto_key: autoKey,
+                business_factor: factor,
+                month_units: monthUnits,
+                generated_at: nowIso,
+              },
+            });
+            existingAutoKeys.add(autoKey);
+          }
+
+          for (const t of teams) {
+            const adsBase = Number(resolveCosts(settingsContext, { teamId: t.id }).adsBudget || 0);
+            if (adsBase <= 0) continue;
+            const autoKey = `auto_fixed_ads:${t.id}:${dateKey}`;
+            if (existingAutoKeys.has(autoKey)) continue;
+            inserts.push({
+              entry_type: 'expense',
+              category: 'marketing_ads',
+              amount: Number((adsBase * factor).toFixed(2)),
+              status: 'pending',
+              team_id: t.id,
+              team_member_id: null,
+              movement_date: dateKey,
+              description: `Tráfego diário automático - ${t.name}`,
+              metadata: {
+                source: 'auto_fixed_cost',
+                auto_kind: 'ads',
+                auto_key: autoKey,
+                business_factor: factor,
+                generated_at: nowIso,
+              },
+            });
+            existingAutoKeys.add(autoKey);
+          }
+        }
+        dt.setDate(dt.getDate() + 1);
+      }
+
+      if (inserts.length > 0) {
+        await supabase.from('finance_entries').insert(inserts);
+      }
+    };
+
+    const autoStart = filterDateFrom || todayYmd();
+    const today = todayYmd();
+    const autoEnd = filterDateTo || (autoStart > today ? autoStart : today);
+    await ensureAutoFixedCosts(autoStart, autoEnd);
+
     let q = supabase
       .from('finance_entries')
       .select('id, entry_type, category, amount, tax_fee, net_amount, status, created_at, movement_date, description, due_date, metadata, team_member_id, team_id')
