@@ -892,6 +892,7 @@ export const FinanceInput = () => {
                   const gross = Number(e.amount) || 0;
                   const net = e.entry_type === 'income' ? getEntryNetAmount(e) : gross;
                   const recurrence = recurrenceLabel(e?.metadata?.recurrence);
+                  const isAutoFixed = e?.metadata?.source === 'auto_fixed_cost';
                   const dueDateLabel = e?.due_date ? new Date(`${e.due_date}T00:00:00`).toLocaleDateString('pt-BR') : null;
                   const mem = e.metadata || {};
                   const comm = e.entry_type === 'income' ? Number(mem.commission_total) || 0 : null;
@@ -914,6 +915,7 @@ export const FinanceInput = () => {
                         <span className={`tag ${e.status === 'paid' ? 'tag-paid' : 'tag-pending'}`}>
                           {e.status === 'paid' ? 'Pago' : 'Dívida'}
                         </span>
+                        {isAutoFixed && <div style={{ color: 'var(--text-secondary)' }}>Automático</div>}
                       </td>
                       <td style={{ fontSize: '0.78rem' }}>
                         {e.entry_type === 'expense' ? recurrence : '—'}
@@ -924,7 +926,15 @@ export const FinanceInput = () => {
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                          <button type="button" className="btn btn-sm btn-secondary" onClick={() => loadEntryForEdit(e)}><Pencil size={14} /></button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            disabled={isAutoFixed}
+                            title={isAutoFixed ? 'Lançamento automático: ajuste pela tela de Frequência/Configurações.' : 'Editar lançamento'}
+                            onClick={() => loadEntryForEdit(e)}
+                          >
+                            <Pencil size={14} />
+                          </button>
                           <button type="button" className="btn btn-sm btn-danger" onClick={() => handleDelete(e.id)}><Trash2 size={14} /></button>
                         </div>
                       </td>

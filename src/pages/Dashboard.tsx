@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, TrendingDown, Target, Zap, DollarSign, Users, CalendarCheck } from 'lucide-react';
 import { getEntryNetAmount } from '../lib/financeLabels';
-import { dayEndIsoFromYmd, dayStartIsoFromYmd, formatDateYmd, shiftDaysYmd, todayYmd } from '../lib/date';
+import { dayEndIsoFromYmd, dayStartIsoFromYmd, formatDateYmd, getBusinessDayFactorFromDate, getMonthBusinessUnitsFromYmd, shiftDaysYmd, todayYmd } from '../lib/date';
 import { clampByCompanyStart, DEFAULT_APP_SETTINGS, loadSettingsContext, resolveCosts } from '../lib/appSettings';
 
 interface Metrics {
@@ -123,9 +123,6 @@ export const Dashboard = () => {
       const clamped = clampByCompanyStart(requested.startYmd, requested.endYmd, settingsContext.app.company_start_date);
       const rangeStartIso = dayStartIsoFromYmd(clamped.startYmd);
       const rangeEndIso = dayEndIsoFromYmd(clamped.endYmd);
-      const targetDate = period === 'custom'
-        ? (customStart < settingsContext.app.company_start_date ? settingsContext.app.company_start_date : customStart)
-        : todayYmd();
       const startDate = new Date(`${clamped.startYmd}T00:00:00`);
       const endDate = new Date(`${clamped.endYmd}T00:00:00`);
       const [finRes, leadsRes, apptRes, targetRes, membersRes] = await Promise.all([
@@ -245,18 +242,23 @@ export const Dashboard = () => {
       const hasMonthlyPayrollLaunches = monthlyPayrollEntries.length > 0;
       iterateDays(startDate, endDate, (dt) => {
         const dateKey = formatDateYmd(dt);
+        const businessFactor = getBusinessDayFactorFromDate(dt);
         if (!dailyMap[dateKey]) dailyMap[dateKey] = { revenueNet: 0, expense: 0, commissions: 0 };
+        if (businessFactor <= 0) return;
         if (!hasMonthlyPayrollLaunches && !payrollDaysWithEntries.has(dateKey) && payrollMonthlyTotal > 0) {
-          const daysInMonth = new Date(dt.getFullYear(), dt.getMonth() + 1, 0).getDate();
-          const payrollPerDay = payrollMonthlyTotal / daysInMonth;
-          payroll += payrollPerDay;
-          totalExpAll += payrollPerDay;
-          dailyMap[dateKey].expense += payrollPerDay;
+          const monthUnits = getMonthBusinessUnitsFromYmd(dateKey);
+          if (monthUnits > 0) {
+            const payrollPerDay = (payrollMonthlyTotal / monthUnits) * businessFactor;
+            payroll += payrollPerDay;
+            totalExpAll += payrollPerDay;
+            dailyMap[dateKey].expense += payrollPerDay;
+          }
         }
         if (!adsDaysWithEntries.has(dateKey) && configuredDailyAds > 0) {
-          ads += configuredDailyAds;
-          totalExpAll += configuredDailyAds;
-          dailyMap[dateKey].expense += configuredDailyAds;
+          const adsForDay = configuredDailyAds * businessFactor;
+          ads += adsForDay;
+          totalExpAll += adsForDay;
+          dailyMap[dateKey].expense += adsForDay;
         }
       });
 
@@ -267,16 +269,20 @@ export const Dashboard = () => {
         const month = movementDate.getMonth();
         const monthStart = new Date(year, month, 1);
         const monthEnd = new Date(year, month + 1, 0);
-        const daysInMonth = monthEnd.getDate();
         const effectiveStart = startDate > monthStart ? startDate : monthStart;
         const effectiveEnd = endDate < monthEnd ? endDate : monthEnd;
         if (effectiveStart > effectiveEnd) return;
-        const perDay = amount / daysInMonth;
+        const monthUnits = getMonthBusinessUnitsFromYmd(entry._movement_day);
+        if (monthUnits <= 0) return;
+        const perUnit = amount / monthUnits;
         iterateDays(effectiveStart, effectiveEnd, (dt) => {
+          const factor = getBusinessDayFactorFromDate(dt);
+          if (factor <= 0) return;
           const key = formatDateYmd(dt);
           if (!dailyMap[key]) dailyMap[key] = { revenueNet: 0, expense: 0, commissions: 0 };
-          dailyMap[key].expense += perDay;
-          proratedPayroll += perDay;
+          const value = perUnit * factor;
+          dailyMap[key].expense += value;
+          proratedPayroll += value;
         });
       });
 

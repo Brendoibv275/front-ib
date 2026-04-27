@@ -43,3 +43,33 @@ export function toDateTimeYmd(value: string | null | undefined): string {
 export function formatYmdPtBr(ymd: string): string {
   return parseYmd(ymd).toLocaleDateString('pt-BR');
 }
+
+/**
+ * Regra de jornada:
+ * - segunda a sexta: 1.0
+ * - sábado: 0.5
+ * - domingo: 0.0
+ */
+export function getBusinessDayFactorFromDate(date: Date): number {
+  const weekDay = date.getDay();
+  if (weekDay === 0) return 0;
+  if (weekDay === 6) return 0.5;
+  return 1;
+}
+
+export function getBusinessDayFactorFromYmd(ymd: string): number {
+  const dt = parseYmd(ymd);
+  return getBusinessDayFactorFromDate(dt);
+}
+
+export function getMonthBusinessUnitsFromYmd(ymd: string): number {
+  const base = parseYmd(ymd);
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  const monthEnd = new Date(year, month + 1, 0).getDate();
+  let units = 0;
+  for (let day = 1; day <= monthEnd; day += 1) {
+    units += getBusinessDayFactorFromDate(new Date(year, month, day));
+  }
+  return units;
+}

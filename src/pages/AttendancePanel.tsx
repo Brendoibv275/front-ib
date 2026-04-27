@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarCheck, Save, Wand2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { formatYmdPtBr, shiftDaysYmd, todayYmd } from '../lib/date';
+import { formatYmdPtBr, getBusinessDayFactorFromYmd, getMonthBusinessUnitsFromYmd, shiftDaysYmd, todayYmd } from '../lib/date';
 import {
   clampByCompanyStart,
   DEFAULT_APP_SETTINGS,
@@ -190,19 +190,16 @@ export const AttendancePanel = () => {
     setGenerating(true);
     setMessage(null);
     const presentRows = rows.filter(r => r.status === 'present');
-    if (presentRows.length === 0) {
-      setMessage({ type: 'err', text: 'Nenhuma presença marcada para gerar despesas.' });
-      setGenerating(false);
-      return;
-    }
+    const clampedStart = startDate < settingsContext.app.company_start_date ? settingsContext.app.company_start_date : startDate;
+    const clampedEnd = endDate < settingsContext.app.company_start_date ? settingsContext.app.company_start_date : endDate;
+    const rangeDays = dayList(clampedStart, clampedEnd);
 
     const { data: existingEntries, error: existingError } = await supabase
       .from('finance_entries')
-      .select('metadata')
+      .select('metadata, movement_date, team_id, team_member_id, category')
       .eq('entry_type', 'expense')
-      .gte('movement_date', startDate < settingsContext.app.company_start_date ? settingsContext.app.company_start_date : startDate)
-      .lte('movement_date', endDate < settingsContext.app.company_start_date ? settingsContext.app.company_start_date : endDate)
-      .contains('metadata', { source: 'attendance' });
+      .gte('movement_date', clampedStart)
+      .lte('movement_date', clampedEnd);
 
     if (existingError) {
       setMessage({ type: 'err', text: existingError.message });
@@ -211,15 +208,24 @@ export const AttendancePanel = () => {
     }
 
     const existingKeys = new Set<string>();
+    const existingAutoKeys = new Set<string>();
     (existingEntries || []).forEach((entry: any) => {
-      const attendanceId = entry?.metadata?.attendance_id;
-      const attendanceKind = entry?.metadata?.attendance_kind;
-      if (attendanceId && attendanceKind) existingKeys.add(`${attendanceId}:${attendanceKind}`);
+      if (entry?.metadata?.source === 'attendance') {
+        const attendanceId = entry?.metadata?.attendance_id;
+        const attendanceKind = entry?.metadata?.attendance_kind;
+        if (attendanceId && attendanceKind) existingKeys.add(`${attendanceId}:${attendanceKind}`);
+      }
+      if (entry?.metadata?.source === 'auto_fixed_cost' && typeof entry?.metadata?.auto_key === 'string') {
+        existingAutoKeys.add(entry.metadata.auto_key);
+      }
     });
 
     const nowIso = new Date().toISOString();
     const inserts: any[] = [];
     let missingTeamCount = 0;
+    let attendanceGenerated = 0;
+    let autoPayrollGenerated = 0;
+    let autoAdsGenerated = 0;
 
     for (const row of presentRows) {
       const member = membersMap[row.team_member_id];
@@ -261,6 +267,7 @@ export const AttendancePanel = () => {
           description: `Diária por frequência - ${member.name}`,
           metadata: { ...baseMetadata, attendance_kind: 'daily' },
         });
+        attendanceGenerated += 1;
       }
 
       if (row.include_lunch && lunchAmount > 0 && !existingKeys.has(`${row.id}:lunch`)) {
@@ -275,6 +282,84 @@ export const AttendancePanel = () => {
           description: `Almoço por frequência - ${member.name}`,
           metadata: { ...baseMetadata, attendance_kind: 'lunch' },
         });
+        attendanceGenerated += 1;
+      }
+    }
+
+    const scopedMembers = members.filter((member) => {
+      if (!member.active) return false;
+      if (teamFilter === 'all') return true;
+      return member.team_id === teamFilter;
+    });
+
+    for (const day of rangeDays) {
+      const factor = getBusinessDayFactorFromYmd(day);
+      if (factor <= 0) continue;
+      for (const member of scopedMembers) {
+        if (!member.team_id) {
+          missingTeamCount += 1;
+          continue;
+        }
+        const monthUnits = getMonthBusinessUnitsFromYmd(day);
+        if (monthUnits <= 0) continue;
+        const monthlyCost = Number(member.fixed_cost || 0);
+        if (monthlyCost <= 0) continue;
+        const amount = (monthlyCost / monthUnits) * factor;
+        const autoKey = `auto_fixed_payroll:${member.id}:${day}`;
+        if (existingAutoKeys.has(autoKey)) continue;
+        inserts.push({
+          entry_type: 'expense',
+          category: 'fixed_payroll',
+          amount: Number(amount.toFixed(2)),
+          status: 'pending',
+          team_id: member.team_id,
+          team_member_id: member.id,
+          movement_date: day,
+          description: `Folha diária automática - ${member.name}`,
+          metadata: {
+            source: 'auto_fixed_cost',
+            auto_kind: 'payroll',
+            auto_key: autoKey,
+            business_factor: factor,
+            month_units: monthUnits,
+            generated_at: nowIso,
+          },
+        });
+        existingAutoKeys.add(autoKey);
+        autoPayrollGenerated += 1;
+      }
+    }
+
+    const scopedTeams = teams.filter((item) => teamFilter === 'all' || item.id === teamFilter);
+    for (const day of rangeDays) {
+      const factor = getBusinessDayFactorFromYmd(day);
+      if (factor <= 0) continue;
+      for (const teamItem of scopedTeams) {
+        const scoped = resolveCosts(settingsContext, { teamId: teamItem.id });
+        const baseAds = Number(scoped.adsBudget || 0);
+        if (baseAds <= 0) continue;
+        const amount = baseAds * factor;
+        const autoKey = `auto_fixed_ads:${teamItem.id}:${day}`;
+        if (existingAutoKeys.has(autoKey)) continue;
+        inserts.push({
+          entry_type: 'expense',
+          category: 'marketing_ads',
+          amount: Number(amount.toFixed(2)),
+          status: 'pending',
+          team_id: teamItem.id,
+          team_member_id: null,
+          movement_date: day,
+          description: `Tráfego diário automático - ${teamItem.name}`,
+          metadata: {
+            source: 'auto_fixed_cost',
+            auto_kind: 'ads',
+            auto_key: autoKey,
+            business_factor: factor,
+            generated_at: nowIso,
+          },
+        });
+        existingAutoKeys.add(autoKey);
+        autoAdsGenerated += 1;
       }
     }
 
@@ -295,8 +380,8 @@ export const AttendancePanel = () => {
     setMessage({
       type: 'ok',
       text: inserts.length > 0
-        ? `${inserts.length} despesa(s) gerada(s) com sucesso.${missingTeamCount > 0 ? ` ${missingTeamCount} presença(s) sem equipe vinculada foram ignoradas.` : ''}`
-        : `Nenhuma nova despesa gerada.${missingTeamCount > 0 ? ` ${missingTeamCount} presença(s) sem equipe vinculada foram ignoradas.` : ' Itens já estavam lançados.'}`,
+        ? `${inserts.length} despesa(s) gerada(s): ${attendanceGenerated} por frequência, ${autoPayrollGenerated} de folha automática e ${autoAdsGenerated} de ads automáticos.${missingTeamCount > 0 ? ` ${missingTeamCount} item(ns) sem equipe vinculada foram ignorados.` : ''}`
+        : `Nenhuma nova despesa gerada.${missingTeamCount > 0 ? ` ${missingTeamCount} item(ns) sem equipe vinculada foram ignorados.` : ' Itens já estavam lançados.'}`,
     });
     await fetchRows();
     setGenerating(false);
@@ -306,7 +391,7 @@ export const AttendancePanel = () => {
     <div className="page">
       <div className="page-header">
         <h2>Frequência da equipe</h2>
-        <p>Marque presença/ausência/feriado e gere despesas de diária/almoço de forma automática e rastreável.</p>
+        <p>Marque presença/ausência/feriado e gere despesas rastreáveis, incluindo dívidas automáticas de folha e ads por dia útil.</p>
       </div>
 
       <div className="card" style={{ marginBottom: '1rem' }}>
