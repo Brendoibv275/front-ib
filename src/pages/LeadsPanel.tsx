@@ -1,14 +1,30 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Eye, MessageSquare, CalendarCheck, Search, ChevronDown, ChevronUp, Phone, MapPin, Thermometer } from 'lucide-react';
+import { MessageSquare, CalendarCheck, Search, ChevronDown, ChevronUp, Phone, MapPin } from 'lucide-react';
 
 interface Lead {
   id: string; display_name: string; phone: string; external_user_id: string;
   stage: string; service_type: string; btus: number; address: string;
   quoted_amount: number; created_at: string; last_inbound_at: string;
+  equipe_responsavel?: string | null;
+  bot_paused?: boolean | null;
+  bot_paused_at?: string | null;
+  bot_paused_by?: string | null;
+  bot_paused_reason?: string | null;
+  bot_reactivated_at?: string | null;
+  bot_reactivated_by?: string | null;
 }
 interface Message { id: string; role: string; body: string; created_at: string; }
 interface Appointment { id: string; lead_id: string; window_label: string; status: string; notes: string; created_at: string; }
+interface BotStatus {
+  bot_paused?: boolean | null;
+  bot_paused_at?: string | null;
+  bot_paused_by?: string | null;
+  bot_paused_reason?: string | null;
+  bot_reactivated_at?: string | null;
+  bot_reactivated_by?: string | null;
+  equipe_responsavel?: string | null;
+}
 
 const stageLabel: Record<string, string> = {
   new: 'Novo', qualified: 'Qualificado', quoted: 'Orçado', awaiting_slot: 'Aguardando Vaga',
@@ -28,6 +44,12 @@ export const LeadsPanel = () => {
   const [expandedLead, setExpandedLead] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [editLead, setEditLead] = useState<Lead | null>(null);
+  const [reactivatingLeadId, setReactivatingLeadId] = useState<string | null>(null);
+  const [statusLoadingLeadId, setStatusLoadingLeadId] = useState<string | null>(null);
+  const [botStatusMap, setBotStatusMap] = useState<Record<string, BotStatus>>({});
+  const [botStatusErrorMap, setBotStatusErrorMap] = useState<Record<string, string>>({});
+
+  const backendBaseUrl = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/+$/, '');
 
   useEffect(() => { fetchAll(); }, []);
 
@@ -47,7 +69,41 @@ export const LeadsPanel = () => {
     setExpandedLead(leadId);
     const { data } = await supabase.from('messages').select('*').eq('lead_id', leadId).order('created_at', { ascending: true });
     if (data) setMessages(data);
+    fetchBotStatus(leadId);
   };
+
+  const fetchBotStatus = async (leadId: string) => {
+    setStatusLoadingLeadId(leadId);
+    setBotStatusErrorMap(prev => ({ ...prev, [leadId]: '' }));
+    try {
+      const response = await fetch(`${backendBaseUrl}/leads/${leadId}/bot-status`, { method: 'GET' });
+      if (!response.ok) throw new Error('Não foi possível consultar status do bot.');
+      const status = (await response.json()) as BotStatus;
+      setBotStatusMap(prev => ({ ...prev, [leadId]: status }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao consultar status do bot.';
+      setBotStatusErrorMap(prev => ({ ...prev, [leadId]: message }));
+    } finally {
+      setStatusLoadingLeadId(prev => (prev === leadId ? null : prev));
+    }
+  };
+
+  const reactivateBot = async (leadId: string) => {
+    setReactivatingLeadId(leadId);
+    try {
+      const response = await fetch(`${backendBaseUrl}/leads/${leadId}/bot/reactivate`, { method: 'POST' });
+      if (!response.ok) throw new Error('Não foi possível reativar o bot.');
+      await fetchAll();
+      await fetchBotStatus(leadId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao reativar bot.';
+      setBotStatusErrorMap(prev => ({ ...prev, [leadId]: message }));
+    } finally {
+      setReactivatingLeadId(null);
+    }
+  };
+
+  const getLeadBotStatus = (lead: Lead): BotStatus => ({ ...lead, ...(botStatusMap[lead.id] || {}) });
 
   const updateStage = async (leadId: string, newStage: string) => {
     await supabase.from('leads').update({ stage: newStage }).eq('id', leadId);
@@ -67,6 +123,7 @@ export const LeadsPanel = () => {
   const newLeads = leads.filter(l => l.stage === 'new').length;
   const qualifiedLeads = leads.filter(l => l.stage === 'qualified' || l.stage === 'quoted').length;
   const scheduledLeads = leads.filter(l => l.stage === 'scheduled').length;
+  const pausedLeads = leads.filter(l => Boolean(getLeadBotStatus(l).bot_paused)).length;
 
   return (
     <div className="page">
@@ -81,6 +138,7 @@ export const LeadsPanel = () => {
         <div className="card stat-card"><div className="stat-label">Novos (Sem Contato)</div><div className="stat-value sm text-warning">{newLeads}</div></div>
         <div className="card stat-card"><div className="stat-label">Qualificados / Orçados</div><div className="stat-value sm text-success">{qualifiedLeads}</div></div>
         <div className="card stat-card"><div className="stat-label">Visitas Agendadas</div><div className="stat-value sm">{scheduledLeads}</div></div>
+        <div className="card stat-card"><div className="stat-label">Bots Pausados</div><div className="stat-value sm text-warning">{pausedLeads}</div></div>
       </div>
 
       {/* Filtros */}
@@ -113,8 +171,11 @@ export const LeadsPanel = () => {
               <tr><th>Nome / WhatsApp</th><th>Serviço</th><th>Endereço</th><th>Estágio</th><th>Orçamento</th><th>Data</th><th></th></tr>
             </thead>
             <tbody>
-              {filtered.map(lead => (
-                <>
+              {filtered.map(lead => {
+                const leadStatus = getLeadBotStatus(lead);
+                const isPaused = Boolean(leadStatus.bot_paused);
+                return (
+                <Fragment key={lead.id}>
                   <tr key={lead.id} style={{ cursor: 'pointer' }} onClick={() => toggleExpand(lead.id)}>
                     <td>
                       <div style={{ fontWeight: 600 }}>{lead.display_name || '—'}</div>
@@ -139,9 +200,11 @@ export const LeadsPanel = () => {
                     </td>
                     <td style={{ fontWeight: 600 }}>{lead.quoted_amount ? `R$ ${Number(lead.quoted_amount).toFixed(2)}` : '—'}</td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>{new Date(lead.created_at).toLocaleDateString('pt-BR')}</td>
-                    <td>{expandedLead === lead.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}</td>
+                    <td style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                      <span className={`tag ${isPaused ? 'tag-lost' : 'tag-qualified'}`}>{isPaused ? 'Bot pausado' : 'Bot ativo'}</span>
+                      {expandedLead === lead.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </td>
                   </tr>
-
                   {expandedLead === lead.id && (
                     <tr key={`${lead.id}-detail`}>
                       <td colSpan={7} style={{ padding: '1.25rem', background: 'var(--bg-secondary)' }}>
@@ -190,13 +253,44 @@ export const LeadsPanel = () => {
                             <div className="detail-row"><span className="detail-label">BTUs</span><span className="detail-value">{lead.btus || '—'}</span></div>
                             <div className="detail-row"><span className="detail-label">Serviço</span><span className="detail-value">{lead.service_type || '—'}</span></div>
                             <div className="detail-row"><span className="detail-label">Endereço</span><span className="detail-value">{lead.address || '—'}</span></div>
+                            <div className="detail-row"><span className="detail-label">Equipe responsável</span><span className="detail-value">{leadStatus.equipe_responsavel || '—'}</span></div>
+
+                            <h5 style={{ marginTop: '1.25rem', marginBottom: '0.5rem' }}>Status do Bot</h5>
+                            <div className="detail-row"><span className="detail-label">Situação</span><span className="detail-value">{leadStatus.bot_paused ? 'Pausado' : 'Ativo'}</span></div>
+                            <div className="detail-row"><span className="detail-label">Pausado em</span><span className="detail-value">{leadStatus.bot_paused_at ? new Date(leadStatus.bot_paused_at as string).toLocaleString('pt-BR') : '—'}</span></div>
+                            <div className="detail-row"><span className="detail-label">Pausado por</span><span className="detail-value">{leadStatus.bot_paused_by || '—'}</span></div>
+                            <div className="detail-row"><span className="detail-label">Motivo da pausa</span><span className="detail-value">{leadStatus.bot_paused_reason || '—'}</span></div>
+                            <div className="detail-row"><span className="detail-label">Reativado em</span><span className="detail-value">{leadStatus.bot_reactivated_at ? new Date(leadStatus.bot_reactivated_at as string).toLocaleString('pt-BR') : '—'}</span></div>
+                            <div className="detail-row"><span className="detail-label">Reativado por</span><span className="detail-value">{leadStatus.bot_reactivated_by || '—'}</span></div>
+                            {botStatusErrorMap[lead.id] && (
+                              <p style={{ marginTop: '0.6rem', color: 'var(--danger)' }}>{botStatusErrorMap[lead.id]}</p>
+                            )}
+                            <div style={{ marginTop: '0.8rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                              <button
+                                className="btn btn-sm btn-secondary"
+                                onClick={() => fetchBotStatus(lead.id)}
+                                disabled={statusLoadingLeadId === lead.id}
+                              >
+                                {statusLoadingLeadId === lead.id ? 'Atualizando status...' : 'Atualizar status do bot'}
+                              </button>
+                              {leadStatus.bot_paused && (
+                                <button
+                                  className="btn btn-sm btn-success"
+                                  onClick={() => reactivateBot(lead.id)}
+                                  disabled={reactivatingLeadId === lead.id}
+                                >
+                                  {reactivatingLeadId === lead.id ? 'Reativando...' : 'Reativar bot'}
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
                     </tr>
                   )}
-                </>
-              ))}
+                </Fragment>
+              );
+              })}
             </tbody>
           </table>
           </div>
