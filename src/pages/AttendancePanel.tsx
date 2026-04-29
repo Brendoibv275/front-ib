@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CalendarCheck, Save, Wand2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { formatYmdPtBr, getBusinessDayFactorFromYmd, getMonthBusinessUnitsFromYmd, shiftDaysYmd, todayYmd } from '../lib/date';
+import {
+  formatYmdPtBr,
+  getBusinessDayFactorFromYmd,
+  getMonthBusinessUnitsFromYmd,
+  MAX_SAFE_DATE_RANGE_DAYS,
+  shiftDaysYmd,
+  todayYmd,
+} from '../lib/date';
 import {
   clampByCompanyStart,
   DEFAULT_APP_SETTINGS,
@@ -131,6 +138,11 @@ export const AttendancePanel = () => {
     setMessage(null);
     const clamped = clampByCompanyStart(startDate, endDate, settingsContext.app.company_start_date);
     const rangeDays = dayList(clamped.startYmd, clamped.endYmd);
+    if (rangeDays.length > MAX_SAFE_DATE_RANGE_DAYS) {
+      setMessage({ type: 'err', text: `Período muito longo (máx. ${MAX_SAFE_DATE_RANGE_DAYS} dias). Reduza o intervalo.` });
+      setSeeding(false);
+      return;
+    }
     const targetMembers = members.filter(m => teamFilter === 'all' || m.team_id === teamFilter);
     const payload: any[] = [];
     for (const day of rangeDays) {
@@ -193,6 +205,11 @@ export const AttendancePanel = () => {
     const clampedStart = startDate < settingsContext.app.company_start_date ? settingsContext.app.company_start_date : startDate;
     const clampedEnd = endDate < settingsContext.app.company_start_date ? settingsContext.app.company_start_date : endDate;
     const rangeDays = dayList(clampedStart, clampedEnd);
+    if (rangeDays.length > MAX_SAFE_DATE_RANGE_DAYS) {
+      setMessage({ type: 'err', text: `Período muito longo (máx. ${MAX_SAFE_DATE_RANGE_DAYS} dias). Reduza o intervalo.` });
+      setGenerating(false);
+      return;
+    }
 
     const { data: existingEntries, error: existingError } = await supabase
       .from('finance_entries')

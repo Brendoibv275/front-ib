@@ -3,7 +3,14 @@ import { useSearchParams } from 'react-router-dom';
 import { ArrowUpCircle, ArrowDownCircle, Save, Pencil, Trash2, X, List, PlusCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { getFinanceCategoryLabel, getEntryNetAmount } from '../lib/financeLabels';
-import { formatYmdPtBr, getBusinessDayFactorFromYmd, getMonthBusinessUnitsFromYmd, todayYmd } from '../lib/date';
+import {
+  formatYmdPtBr,
+  getBusinessDayFactorFromYmd,
+  getMonthBusinessUnitsFromYmd,
+  MAX_SAFE_DATE_RANGE_DAYS,
+  parseSafeIsoDateYmd,
+  todayYmd,
+} from '../lib/date';
 import { DEFAULT_APP_SETTINGS, loadSettingsContext, resolveCosts, type SettingsContext } from '../lib/appSettings';
 
 interface TeamMember { id: string; name: string; role: string; team_id?: string | null; fixed_cost?: number | null; }
@@ -87,12 +94,18 @@ export const FinanceInput = () => {
 
   useEffect(() => {
     fetchEntries();
-  }, [filterType, filterCategory, filterTeamId, filterMemberId, filterDateFrom, filterDateTo]);
-
-  useEffect(() => {
-    if (!team.length || !teams.length) return;
-    fetchEntries();
-  }, [team.length, teams.length, settingsContext.app.company_start_date]);
+  }, [
+    mainTab,
+    filterType,
+    filterCategory,
+    filterTeamId,
+    filterMemberId,
+    filterDateFrom,
+    filterDateTo,
+    team.length,
+    teams.length,
+    settingsContext.app.company_start_date,
+  ]);
 
   const fetchTeam = async () => {
     const { data } = await supabase.from('team_members').select('id, name, role, team_id, fixed_cost').eq('active', true).order('name');
@@ -110,12 +123,19 @@ export const FinanceInput = () => {
   };
 
   const fetchEntries = async () => {
+    const safeFrom = parseSafeIsoDateYmd(filterDateFrom);
+    const safeTo = parseSafeIsoDateYmd(filterDateTo);
+
     const ensureAutoFixedCosts = async (startYmd: string, endYmd: string) => {
       const start = new Date(`${startYmd}T00:00:00`);
       const end = new Date(`${endYmd}T00:00:00`);
       if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return;
       if (start > end) return;
       if (!teams.length && !team.length) return;
+
+      const spanMs = end.getTime() - start.getTime();
+      const spanDays = Math.floor(spanMs / 86400000) + 1;
+      if (spanDays > MAX_SAFE_DATE_RANGE_DAYS) return;
 
       const { data: existingEntries } = await supabase
         .from('finance_entries')
@@ -134,7 +154,9 @@ export const FinanceInput = () => {
       const inserts: any[] = [];
       const nowIso = new Date().toISOString();
       const dt = new Date(start);
-      while (dt <= end) {
+      let safetyCounter = 0;
+      while (dt <= end && safetyCounter < MAX_SAFE_DATE_RANGE_DAYS) {
+        safetyCounter += 1;
         const dateKey = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
         const factor = getBusinessDayFactorFromYmd(dateKey);
         if (factor > 0) {
@@ -144,13 +166,13 @@ export const FinanceInput = () => {
             if (monthlyCost <= 0) continue;
             const monthUnits = getMonthBusinessUnitsFromYmd(dateKey);
             if (monthUnits <= 0) continue;
-            const amount = (monthlyCost / monthUnits) * factor;
+            const rowAmount = (monthlyCost / monthUnits) * factor;
             const autoKey = `auto_fixed_payroll:${member.id}:${dateKey}`;
             if (existingAutoKeys.has(autoKey)) continue;
             inserts.push({
               entry_type: 'expense',
               category: 'fixed_payroll',
-              amount: Number(amount.toFixed(2)),
+              amount: Number(rowAmount.toFixed(2)),
               status: 'pending',
               team_id: member.team_id,
               team_member_id: member.id,
@@ -201,10 +223,13 @@ export const FinanceInput = () => {
       }
     };
 
-    const autoStart = filterDateFrom || todayYmd();
     const today = todayYmd();
-    const autoEnd = filterDateTo || (autoStart > today ? autoStart : today);
-    await ensureAutoFixedCosts(autoStart, autoEnd);
+    const autoStart = safeFrom || today;
+    const autoEnd = safeTo || (autoStart > today ? autoStart : today);
+
+    if (mainTab === 'list') {
+      await ensureAutoFixedCosts(autoStart, autoEnd);
+    }
 
     let q = supabase
       .from('finance_entries')
@@ -217,8 +242,8 @@ export const FinanceInput = () => {
     if (filterCategory) q = q.eq('category', filterCategory);
     if (filterTeamId) q = q.eq('team_id', filterTeamId);
     if (filterMemberId) q = q.eq('team_member_id', filterMemberId);
-    if (filterDateFrom) q = q.gte('movement_date', filterDateFrom);
-    if (filterDateTo) q = q.lte('movement_date', filterDateTo);
+    if (safeFrom) q = q.gte('movement_date', safeFrom);
+    if (safeTo) q = q.lte('movement_date', safeTo);
 
     const { data } = await q;
     if (data) setEntries(data);
@@ -226,6 +251,8 @@ export const FinanceInput = () => {
 
   const teamById = useMemo(() => Object.fromEntries(team.map(t => [t.id, t])), [team]);
   const teamsById = useMemo(() => Object.fromEntries(teams.map(t => [t.id, t])), [teams]);
+  const safeFilterDateFrom = useMemo(() => parseSafeIsoDateYmd(filterDateFrom), [filterDateFrom]);
+  const safeFilterDateTo = useMemo(() => parseSafeIsoDateYmd(filterDateTo), [filterDateTo]);
 
   const roleLabel = (role: string) => {
     if (role === 'technician') return 'Técnico';
@@ -305,11 +332,14 @@ export const FinanceInput = () => {
 
   const listPeriodLabel = useMemo(() => {
     const fmt = (d: string) => new Date(`${d}T12:00:00`).toLocaleDateString('pt-BR');
-    if (filterDateFrom && filterDateTo) return `${fmt(filterDateFrom)} — ${fmt(filterDateTo)}`;
-    if (filterDateFrom) return `A partir de ${fmt(filterDateFrom)}`;
-    if (filterDateTo) return `Até ${fmt(filterDateTo)}`;
+    if (safeFilterDateFrom && safeFilterDateTo) return `${fmt(safeFilterDateFrom)} — ${fmt(safeFilterDateTo)}`;
+    if (safeFilterDateFrom) return `A partir de ${fmt(safeFilterDateFrom)}`;
+    if (safeFilterDateTo) return `Até ${fmt(safeFilterDateTo)}`;
+    if ((filterDateFrom && !safeFilterDateFrom) || (filterDateTo && !safeFilterDateTo)) {
+      return 'Intervalo de datas inválido — limpe o campo e escolha novamente no calendário.';
+    }
     return 'Sem intervalo de datas (últimos registros retornados)';
-  }, [filterDateFrom, filterDateTo]);
+  }, [filterDateFrom, filterDateTo, safeFilterDateFrom, safeFilterDateTo]);
 
   const listSummary = useMemo(() => {
     let netIncome = 0;
@@ -911,11 +941,23 @@ export const FinanceInput = () => {
             </div>
             <div className="form-group">
               <label>Data inicial</label>
-              <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} />
+              <input
+                type="date"
+                min={settingsContext.app.company_start_date || DEFAULT_APP_SETTINGS.company_start_date}
+                max="2100-12-31"
+                value={filterDateFrom}
+                onChange={e => setFilterDateFrom(e.target.value)}
+              />
             </div>
             <div className="form-group">
               <label>Data final</label>
-              <input type="date" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} />
+              <input
+                type="date"
+                min={settingsContext.app.company_start_date || DEFAULT_APP_SETTINGS.company_start_date}
+                max="2100-12-31"
+                value={filterDateTo}
+                onChange={e => setFilterDateTo(e.target.value)}
+              />
             </div>
             <div className="form-group">
               <label>Busca (texto)</label>
