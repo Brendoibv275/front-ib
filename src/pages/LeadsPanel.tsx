@@ -48,6 +48,7 @@ export const LeadsPanel = () => {
   const [statusLoadingLeadId, setStatusLoadingLeadId] = useState<string | null>(null);
   const [botStatusMap, setBotStatusMap] = useState<Record<string, BotStatus>>({});
   const [botStatusErrorMap, setBotStatusErrorMap] = useState<Record<string, string>>({});
+  const [fetchError, setFetchError] = useState<string>('');
 
   const backendBaseUrl = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/+$/, '');
 
@@ -55,10 +56,17 @@ export const LeadsPanel = () => {
 
   const fetchAll = async () => {
     setLoading(true);
+    setFetchError('');
     const [lRes, aRes] = await Promise.all([
       supabase.from('leads').select('*').order('created_at', { ascending: false }),
       supabase.from('appointments').select('*').order('created_at', { ascending: false }),
     ]);
+    if (lRes.error) {
+      setFetchError(`Erro ao carregar leads: ${lRes.error.message}`);
+    }
+    if (aRes.error) {
+      setFetchError(prev => prev || `Erro ao carregar agendamentos: ${aRes.error.message}`);
+    }
     if (lRes.data) setLeads(lRes.data as Lead[]);
     if (aRes.data) setAppointments(aRes.data);
     setLoading(false);
@@ -160,6 +168,9 @@ export const LeadsPanel = () => {
 
       {/* Tabela de Leads */}
       <div className="card">
+        {fetchError && (
+          <p style={{ color: 'var(--danger)', padding: '1rem 1rem 0' }}>{fetchError}</p>
+        )}
         {filtered.length === 0 ? (
           <p style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center' }}>
             {loading ? 'Carregando...' : 'Nenhum lead encontrado.'}
