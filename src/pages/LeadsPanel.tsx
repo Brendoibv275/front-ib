@@ -179,7 +179,7 @@ export const LeadsPanel = () => {
           <div className="table-scroll">
           <table className="data-table">
             <thead>
-              <tr><th>Nome / WhatsApp</th><th>Serviço</th><th>Endereço</th><th>Estágio</th><th>Orçamento</th><th>Data</th><th></th></tr>
+              <tr><th>Nome / WhatsApp</th><th>Serviço</th><th>Endereço</th><th>Equipe Responsável</th><th>Estágio</th><th>Orçamento</th><th>Data</th><th></th></tr>
             </thead>
             <tbody>
               {filtered.map(lead => {
@@ -198,6 +198,7 @@ export const LeadsPanel = () => {
                     <td style={{ fontSize: '0.82rem' }}>
                       {lead.address ? <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><MapPin size={12} />{lead.address}</span> : '—'}
                     </td>
+                    <td>{leadStatus.equipe_responsavel || '—'}</td>
                     <td>
                       <select
                         className={`tag ${stageTag[lead.stage] || ''}`}
@@ -218,7 +219,7 @@ export const LeadsPanel = () => {
                   </tr>
                   {expandedLead === lead.id && (
                     <tr key={`${lead.id}-detail`}>
-                      <td colSpan={7} style={{ padding: '1.25rem', background: 'var(--bg-secondary)' }}>
+                      <td colSpan={8} style={{ padding: '1.25rem', background: 'var(--bg-secondary)' }}>
                         <div className="form-grid" style={{ gap: '1.5rem' }}>
                           {/* Mensagens */}
                           <div>
