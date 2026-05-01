@@ -126,6 +126,11 @@ export const FinanceInput = () => {
     const safeFrom = parseSafeIsoDateYmd(filterDateFrom);
     const safeTo = parseSafeIsoDateYmd(filterDateTo);
 
+    // NOTA: a geração de lançamentos automáticos (folha diária e tráfego Meta Ads)
+    // acontece APENAS via Edge Function `generate-daily-expenses` (cron pg_cron 00:10 BRT)
+    // ou via ação manual "Gerar despesas" em AttendancePanel. O fetch da listagem NÃO
+    // cria linhas novas — isso causava projeções fantasmas (ex.: 144 linhas futuras até 29/05)
+    // e impedia exclusão (a linha era recriada no próximo fetchEntries).
     const ensureAutoFixedCosts = async (startYmd: string, endYmd: string) => {
       const start = new Date(`${startYmd}T00:00:00`);
       const end = new Date(`${endYmd}T00:00:00`);
@@ -227,9 +232,11 @@ export const FinanceInput = () => {
     const autoStart = safeFrom || today;
     const autoEnd = safeTo || (autoStart > today ? autoStart : today);
 
-    if (mainTab === 'list') {
-      await ensureAutoFixedCosts(autoStart, autoEnd);
-    }
+    // Intencionalmente NÃO chama ensureAutoFixedCosts aqui.
+    // Veja comentário no topo do fetchEntries: o fetch não deve escrever no banco.
+    // Os lançamentos automáticos vêm do cron pg_cron via Edge Function.
+    void ensureAutoFixedCosts; // preserva função pra uso futuro (one-off) sem warning de unused
+    void autoStart; void autoEnd;
 
     let q = supabase
       .from('finance_entries')
@@ -1072,8 +1079,7 @@ export const FinanceInput = () => {
                           <button
                             type="button"
                             className="btn btn-sm btn-secondary"
-                            disabled={isAutoFixed}
-                            title={isAutoFixed ? 'Lançamento automático: ajuste pela tela de Frequência/Configurações.' : 'Editar lançamento'}
+                            title={isAutoFixed ? 'Editar lançamento automático (valor, data, status, etc.)' : 'Editar lançamento'}
                             onClick={() => loadEntryForEdit(e)}
                           >
                             <Pencil size={14} />
