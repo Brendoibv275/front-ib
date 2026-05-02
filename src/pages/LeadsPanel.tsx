@@ -46,6 +46,7 @@ export const LeadsPanel = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [editLead, setEditLead] = useState<Lead | null>(null);
   const [reactivatingLeadId, setReactivatingLeadId] = useState<string | null>(null);
+  const [pausingLeadId, setPausingLeadId] = useState<string | null>(null);
   const [statusLoadingLeadId, setStatusLoadingLeadId] = useState<string | null>(null);
   const [botStatusMap, setBotStatusMap] = useState<Record<string, BotStatus>>({});
   const [botStatusErrorMap, setBotStatusErrorMap] = useState<Record<string, string>>({});
@@ -100,15 +101,41 @@ export const LeadsPanel = () => {
   const reactivateBot = async (leadId: string) => {
     setReactivatingLeadId(leadId);
     try {
-      const response = await fetch(`${backendBaseUrl}/leads/${leadId}/bot/reactivate`, { method: 'POST' });
-      if (!response.ok) throw new Error('Não foi possível reativar o bot.');
+      // F — usa o endpoint canônico /resume-bot (mantém /bot/reactivate como fallback).
+      let response = await fetch(`${backendBaseUrl}/leads/${leadId}/resume-bot`, { method: 'POST' });
+      if (response.status === 404) {
+        response = await fetch(`${backendBaseUrl}/leads/${leadId}/bot/reactivate`, { method: 'POST' });
+      }
+      if (!response.ok) throw new Error('Não foi possível retomar o bot.');
       await fetchAll();
       await fetchBotStatus(leadId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Erro ao reativar bot.';
+      const message = error instanceof Error ? error.message : 'Erro ao retomar bot.';
       setBotStatusErrorMap(prev => ({ ...prev, [leadId]: message }));
     } finally {
       setReactivatingLeadId(null);
+    }
+  };
+
+  const pauseBot = async (leadId: string) => {
+    // F — pausa manual via painel. Motivo default curto, ajustável no futuro via prompt.
+    const reason = (window.prompt('Motivo da pausa (opcional):', 'pausado pelo operador') || 'pausado pelo operador').trim();
+    setPausingLeadId(leadId);
+    setBotStatusErrorMap(prev => ({ ...prev, [leadId]: '' }));
+    try {
+      const response = await fetch(`${backendBaseUrl}/leads/${leadId}/pause-bot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      if (!response.ok) throw new Error('Não foi possível pausar o bot.');
+      await fetchAll();
+      await fetchBotStatus(leadId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Erro ao pausar bot.';
+      setBotStatusErrorMap(prev => ({ ...prev, [leadId]: message }));
+    } finally {
+      setPausingLeadId(null);
     }
   };
 
@@ -218,7 +245,7 @@ export const LeadsPanel = () => {
                     </td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>{new Date(lead.created_at).toLocaleDateString('pt-BR')}</td>
                     <td style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
-                      <span className={`tag ${isPaused ? 'tag-lost' : 'tag-qualified'}`}>{isPaused ? 'Bot pausado' : 'Bot ativo'}</span>
+                      <span className={`tag ${isPaused ? 'tag-lost' : 'tag-qualified'}`}>{isPaused ? '🤚 bot pausado' : 'Bot ativo'}</span>
                       {expandedLead === lead.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </td>
                   </tr>
@@ -290,13 +317,21 @@ export const LeadsPanel = () => {
                               >
                                 {statusLoadingLeadId === lead.id ? 'Atualizando status...' : 'Atualizar status do bot'}
                               </button>
-                              {leadStatus.bot_paused && (
+                              {leadStatus.bot_paused ? (
                                 <button
                                   className="btn btn-sm btn-success"
                                   onClick={() => reactivateBot(lead.id)}
                                   disabled={reactivatingLeadId === lead.id}
                                 >
-                                  {reactivatingLeadId === lead.id ? 'Reativando...' : 'Reativar bot'}
+                                  {reactivatingLeadId === lead.id ? 'Retomando...' : '▶️ Retomar bot'}
+                                </button>
+                              ) : (
+                                <button
+                                  className="btn btn-sm btn-warning"
+                                  onClick={() => pauseBot(lead.id)}
+                                  disabled={pausingLeadId === lead.id}
+                                >
+                                  {pausingLeadId === lead.id ? 'Pausando...' : '🤚 Pausar bot'}
                                 </button>
                               )}
                             </div>
