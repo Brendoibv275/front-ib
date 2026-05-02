@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { MessageSquare, CalendarCheck, Search, ChevronDown, ChevronUp, Phone, MapPin } from 'lucide-react';
+import { MessageSquare, CalendarCheck, Search, ChevronDown, ChevronUp, Phone } from 'lucide-react';
+import { AddressCell } from '../components/AddressCell';
 
 interface Lead {
   id: string; display_name: string; phone: string; external_user_id: string;
@@ -196,7 +197,7 @@ export const LeadsPanel = () => {
                     </td>
                     <td>{lead.service_type || '—'}</td>
                     <td style={{ fontSize: '0.82rem' }}>
-                      {lead.address ? <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><MapPin size={12} />{lead.address}</span> : '—'}
+                      <AddressCell address={lead.address} />
                     </td>
                     <td>{leadStatus.equipe_responsavel || '—'}</td>
                     <td>
@@ -210,7 +211,11 @@ export const LeadsPanel = () => {
                         {Object.entries(stageLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                       </select>
                     </td>
-                    <td style={{ fontWeight: 600 }}>{lead.quoted_amount ? `R$ ${Number(lead.quoted_amount).toFixed(2)}` : '—'}</td>
+                    <td style={{ fontWeight: 600 }} title="Valor estimado — pode ser ajustado pelo técnico no local">
+                      {lead.quoted_amount
+                        ? <span>R$ {Number(lead.quoted_amount).toFixed(2)} <span style={{ fontSize: '0.7rem', fontWeight: 400, color: 'var(--text-secondary)' }}>(est.)</span></span>
+                        : '—'}
+                    </td>
                     <td style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>{new Date(lead.created_at).toLocaleDateString('pt-BR')}</td>
                     <td style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
                       <span className={`tag ${isPaused ? 'tag-lost' : 'tag-qualified'}`}>{isPaused ? 'Bot pausado' : 'Bot ativo'}</span>
