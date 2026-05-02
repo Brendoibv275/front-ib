@@ -6,10 +6,22 @@ import { AddressCell } from '../components/AddressCell';
 interface AppointmentRow {
   id: string; lead_id: string; window_label: string; status: string;
   notes: string; calendar_event_id: string; created_at: string;
+  scheduled_date?: string | null;
+  slot?: string | null;
   lead?: { display_name: string; phone: string; address: string; service_type: string; };
 }
 
+interface TeamItem { id: string; name: string; }
+
 type SlotKey = 'morning_early' | 'morning_late' | 'afternoon_early' | 'afternoon_late';
+
+// Rótulo curto para a coluna "Data/Slot" da tabela
+const SLOT_SHORT: Record<string, string> = {
+  morning_early: '08h–10h',
+  morning_late: '10h–12h',
+  afternoon_early: '13h–15h',
+  afternoon_late: '15h–17h',
+};
 
 const SLOT_LABELS: Record<SlotKey, string> = {
   morning_early: 'Manhã cedo (08–10h)',
@@ -30,6 +42,7 @@ export const AppointmentsPanel = () => {
   const [filter, setFilter] = useState('all');
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+  const [teams, setTeams] = useState<TeamItem[]>([]);
 
   // Modal state
   const [confirmTarget, setConfirmTarget] = useState<AppointmentRow | null>(null);
@@ -42,7 +55,7 @@ export const AppointmentsPanel = () => {
 
   const backendBaseUrl = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/+$/, '');
 
-  useEffect(() => { fetchAppointments(); }, []);
+  useEffect(() => { fetchAppointments(); fetchTeams(); }, []);
 
   // Auto-dismiss do feedback após 4s
   useEffect(() => {
@@ -56,9 +69,20 @@ export const AppointmentsPanel = () => {
     const { data } = await supabase
       .from('appointments')
       .select('*, lead:leads(display_name, phone, address, service_type)')
+      .order('scheduled_date', { ascending: true, nullsFirst: false })
+      .order('slot', { ascending: true })
       .order('created_at', { ascending: false });
     if (data) setAppointments(data as AppointmentRow[]);
     setLoading(false);
+  };
+
+  const fetchTeams = async () => {
+    const { data } = await supabase
+      .from('teams')
+      .select('id, name')
+      .eq('active', true)
+      .order('name');
+    if (data) setTeams(data as TeamItem[]);
   };
 
   const callAdk = async (path: string, body: Record<string, unknown>): Promise<void> => {
@@ -239,7 +263,7 @@ export const AppointmentsPanel = () => {
           <div className="table-scroll">
           <table className="data-table">
             <thead>
-              <tr><th>Cliente</th><th>Janela</th><th>Serviço</th><th>Endereço</th><th>Status</th><th>Criado em</th><th>Ações</th></tr>
+              <tr><th>Cliente</th><th>Data/Slot</th><th>Janela</th><th>Serviço</th><th>Endereço</th><th>Status</th><th>Criado em</th><th>Ações</th></tr>
             </thead>
             <tbody>
               {filtered.map(a => {
@@ -257,6 +281,11 @@ export const AppointmentsPanel = () => {
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{a.lead?.phone || ''}</div>
                         </div>
                       </div>
+                    </td>
+                    <td style={{ fontSize: '0.82rem' }}>
+                      {a.scheduled_date
+                        ? `${new Date(a.scheduled_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}${a.slot ? ' · ' + (SLOT_SHORT[a.slot] || a.slot) : ''}`
+                        : '—'}
                     </td>
                     <td style={{ fontWeight: 600 }}>{a.window_label}</td>
                     <td>{a.lead?.service_type || '—'}</td>
@@ -305,16 +334,19 @@ export const AppointmentsPanel = () => {
             Janela: <strong>{confirmTarget.window_label}</strong>
           </p>
           <label style={labelStyle}>
-            Equipe / team_id (opcional)
+            Equipe
           </label>
-          <input
-            type="text"
+          <select
             className="input"
-            placeholder="Ex.: equipe-a ou deixe em branco"
             value={confirmTeamId}
             onChange={e => setConfirmTeamId(e.target.value)}
             style={inputStyle}
-          />
+          >
+            <option value="">— Sem atribuir (decidir depois) —</option>
+            {teams.map(t => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
           <div style={modalActions}>
             <button className="btn btn-secondary" onClick={() => setConfirmTarget(null)} disabled={actionLoadingId === confirmTarget.id}>
               Cancelar
