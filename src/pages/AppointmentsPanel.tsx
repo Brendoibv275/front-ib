@@ -9,6 +9,15 @@ interface AppointmentRow {
   lead?: { display_name: string; phone: string; address: string; service_type: string; };
 }
 
+type SlotKey = 'morning_early' | 'morning_late' | 'afternoon_early' | 'afternoon_late';
+
+const SLOT_LABELS: Record<SlotKey, string> = {
+  morning_early: 'Manhã cedo (08–10h)',
+  morning_late: 'Manhã tarde (10–12h)',
+  afternoon_early: 'Tarde cedo (13–15h)',
+  afternoon_late: 'Tarde fim (15–17h)',
+};
+
 type FeedbackKind = 'success' | 'error';
 interface Feedback { kind: FeedbackKind; message: string; }
 
@@ -21,6 +30,15 @@ export const AppointmentsPanel = () => {
   const [filter, setFilter] = useState('all');
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
+
+  // Modal state
+  const [confirmTarget, setConfirmTarget] = useState<AppointmentRow | null>(null);
+  const [confirmTeamId, setConfirmTeamId] = useState('');
+  const [reallocTarget, setReallocTarget] = useState<AppointmentRow | null>(null);
+  const [reallocDate, setReallocDate] = useState('');
+  const [reallocSlot, setReallocSlot] = useState<SlotKey>('morning_early');
+  const [cancelTarget, setCancelTarget] = useState<AppointmentRow | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
 
   const backendBaseUrl = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/+$/, '');
 
@@ -62,15 +80,22 @@ export const AppointmentsPanel = () => {
     }
   };
 
-  // --- Ações (versão inicial: prompts nativos; modais ricos virão em commit seguinte) ---
-  const handleConfirm = async (a: AppointmentRow) => {
-    const teamId = window.prompt('Team ID (opcional, deixe em branco para pular):', '') ?? '';
-    setActionLoadingId(a.id);
+  // --- Confirmar ---
+  const openConfirm = (a: AppointmentRow) => {
+    setConfirmTarget(a);
+    setConfirmTeamId('');
+  };
+
+  const submitConfirm = async () => {
+    if (!confirmTarget) return;
+    const id = confirmTarget.id;
+    setActionLoadingId(id);
     try {
       const body: Record<string, unknown> = {};
-      if (teamId.trim()) body.team_id = teamId.trim();
-      await callAdk(`/appointments/${a.id}/confirm`, body);
+      if (confirmTeamId.trim()) body.team_id = confirmTeamId.trim();
+      await callAdk(`/appointments/${id}/confirm`, body);
       setFeedback({ kind: 'success', message: 'Agendamento confirmado com sucesso.' });
+      setConfirmTarget(null);
       await fetchAppointments();
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Falha ao confirmar.';
@@ -80,21 +105,31 @@ export const AppointmentsPanel = () => {
     }
   };
 
-  const handleRealloc = async (a: AppointmentRow) => {
-    const newDate = window.prompt('Nova data (YYYY-MM-DD):', '') ?? '';
-    if (!newDate.trim()) return;
-    const newSlot = window.prompt(
-      'Novo slot (morning_early | morning_late | afternoon_early | afternoon_late):',
-      'morning_early',
-    ) ?? '';
-    if (!newSlot.trim()) return;
-    setActionLoadingId(a.id);
+  // --- Realocar ---
+  const openRealloc = (a: AppointmentRow) => {
+    setReallocTarget(a);
+    // sugestão: amanhã
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    setReallocDate(tomorrow.toISOString().slice(0, 10));
+    setReallocSlot('morning_early');
+  };
+
+  const submitRealloc = async () => {
+    if (!reallocTarget) return;
+    if (!reallocDate) {
+      setFeedback({ kind: 'error', message: 'Escolha uma nova data.' });
+      return;
+    }
+    const id = reallocTarget.id;
+    setActionLoadingId(id);
     try {
-      await callAdk(`/appointments/${a.id}/realloc`, {
-        new_date: newDate.trim(),
-        new_slot: newSlot.trim(),
+      await callAdk(`/appointments/${id}/realloc`, {
+        new_date: reallocDate,
+        new_slot: reallocSlot,
       });
       setFeedback({ kind: 'success', message: 'Realocação enviada pro cliente.' });
+      setReallocTarget(null);
       await fetchAppointments();
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Falha ao realocar.';
@@ -104,15 +139,22 @@ export const AppointmentsPanel = () => {
     }
   };
 
-  const handleCancel = async (a: AppointmentRow) => {
-    if (!window.confirm(`Cancelar agendamento de ${a.lead?.display_name || 'cliente'}?`)) return;
-    const reason = window.prompt('Motivo (opcional):', '') ?? '';
-    setActionLoadingId(a.id);
+  // --- Cancelar ---
+  const openCancel = (a: AppointmentRow) => {
+    setCancelTarget(a);
+    setCancelReason('');
+  };
+
+  const submitCancel = async () => {
+    if (!cancelTarget) return;
+    const id = cancelTarget.id;
+    setActionLoadingId(id);
     try {
       const body: Record<string, unknown> = {};
-      if (reason.trim()) body.reason = reason.trim();
-      await callAdk(`/appointments/${a.id}/cancel`, body);
+      if (cancelReason.trim()) body.reason = cancelReason.trim();
+      await callAdk(`/appointments/${id}/cancel`, body);
       setFeedback({ kind: 'success', message: 'Agendamento cancelado.' });
+      setCancelTarget(null);
       await fetchAppointments();
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Falha ao cancelar.';
@@ -230,17 +272,17 @@ export const AppointmentsPanel = () => {
                     <td>
                       <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                         {canConfirm && (
-                          <button className="btn btn-sm btn-success" disabled={busy} onClick={() => handleConfirm(a)}>
+                          <button className="btn btn-sm btn-success" disabled={busy} onClick={() => openConfirm(a)}>
                             Confirmar
                           </button>
                         )}
                         {canRealloc && (
-                          <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => handleRealloc(a)}>
+                          <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => openRealloc(a)}>
                             Realocar
                           </button>
                         )}
                         {canCancel && (
-                          <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => handleCancel(a)}>
+                          <button className="btn btn-sm btn-danger" disabled={busy} onClick={() => openCancel(a)}>
                             Cancelar
                           </button>
                         )}
@@ -254,6 +296,153 @@ export const AppointmentsPanel = () => {
           </div>
         )}
       </div>
+
+      {/* Modal Confirmar */}
+      {confirmTarget && (
+        <ModalShell title="Confirmar agendamento" onClose={() => setConfirmTarget(null)}>
+          <p style={{ marginBottom: '0.75rem' }}>
+            Cliente: <strong>{confirmTarget.lead?.display_name || '—'}</strong><br />
+            Janela: <strong>{confirmTarget.window_label}</strong>
+          </p>
+          <label style={labelStyle}>
+            Equipe / team_id (opcional)
+          </label>
+          <input
+            type="text"
+            className="input"
+            placeholder="Ex.: equipe-a ou deixe em branco"
+            value={confirmTeamId}
+            onChange={e => setConfirmTeamId(e.target.value)}
+            style={inputStyle}
+          />
+          <div style={modalActions}>
+            <button className="btn btn-secondary" onClick={() => setConfirmTarget(null)} disabled={actionLoadingId === confirmTarget.id}>
+              Cancelar
+            </button>
+            <button className="btn btn-success" onClick={submitConfirm} disabled={actionLoadingId === confirmTarget.id}>
+              {actionLoadingId === confirmTarget.id ? 'Confirmando...' : 'Confirmar'}
+            </button>
+          </div>
+        </ModalShell>
+      )}
+
+      {/* Modal Realocar */}
+      {reallocTarget && (
+        <ModalShell title="Realocar agendamento" onClose={() => setReallocTarget(null)}>
+          <p style={{ marginBottom: '0.75rem' }}>
+            Cliente: <strong>{reallocTarget.lead?.display_name || '—'}</strong><br />
+            Janela atual: <strong>{reallocTarget.window_label}</strong>
+          </p>
+          <label style={labelStyle}>Nova data</label>
+          <input
+            type="date"
+            className="input"
+            value={reallocDate}
+            onChange={e => setReallocDate(e.target.value)}
+            style={inputStyle}
+          />
+          <label style={{ ...labelStyle, marginTop: '0.75rem' }}>Novo slot</label>
+          <select
+            className="input"
+            value={reallocSlot}
+            onChange={e => setReallocSlot(e.target.value as SlotKey)}
+            style={inputStyle}
+          >
+            {(Object.keys(SLOT_LABELS) as SlotKey[]).map(k => (
+              <option key={k} value={k}>{SLOT_LABELS[k]}</option>
+            ))}
+          </select>
+          <div style={modalActions}>
+            <button className="btn btn-secondary" onClick={() => setReallocTarget(null)} disabled={actionLoadingId === reallocTarget.id}>
+              Cancelar
+            </button>
+            <button className="btn btn-primary" onClick={submitRealloc} disabled={actionLoadingId === reallocTarget.id}>
+              {actionLoadingId === reallocTarget.id ? 'Enviando...' : 'Realocar'}
+            </button>
+          </div>
+        </ModalShell>
+      )}
+
+      {/* Modal Cancelar */}
+      {cancelTarget && (
+        <ModalShell title="Cancelar agendamento" onClose={() => setCancelTarget(null)}>
+          <p style={{ marginBottom: '0.75rem' }}>
+            Tem certeza que quer cancelar o agendamento de <strong>{cancelTarget.lead?.display_name || '—'}</strong> ({cancelTarget.window_label})?
+          </p>
+          <label style={labelStyle}>Motivo (opcional)</label>
+          <input
+            type="text"
+            className="input"
+            placeholder="Ex.: cliente pediu pra cancelar"
+            value={cancelReason}
+            onChange={e => setCancelReason(e.target.value)}
+            style={inputStyle}
+          />
+          <div style={modalActions}>
+            <button className="btn btn-secondary" onClick={() => setCancelTarget(null)} disabled={actionLoadingId === cancelTarget.id}>
+              Voltar
+            </button>
+            <button className="btn btn-danger" onClick={submitCancel} disabled={actionLoadingId === cancelTarget.id}>
+              {actionLoadingId === cancelTarget.id ? 'Cancelando...' : 'Confirmar cancelamento'}
+            </button>
+          </div>
+        </ModalShell>
+      )}
     </div>
   );
 };
+
+// --- estilos inline (o projeto ainda não tem sistema de modal/toast pronto) ---
+const inputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '0.5rem 0.65rem',
+  borderRadius: 6,
+  border: '1px solid var(--border)',
+  background: 'var(--bg-primary)',
+  color: 'var(--text-primary)',
+  fontSize: '0.9rem',
+};
+
+const labelStyle: React.CSSProperties = {
+  display: 'block',
+  marginBottom: '0.4rem',
+  fontSize: '0.85rem',
+  color: 'var(--text-secondary)',
+};
+
+const modalActions: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'flex-end',
+  gap: '0.5rem',
+  marginTop: '1.25rem',
+};
+
+interface ModalShellProps {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}
+
+const ModalShell = ({ title, onClose, children }: ModalShellProps) => (
+  <div
+    onClick={onClose}
+    style={{
+      position: 'fixed', inset: 0, zIndex: 500,
+      background: 'rgba(0,0,0,0.55)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      padding: '1rem',
+    }}
+  >
+    <div
+      onClick={e => e.stopPropagation()}
+      className="card"
+      style={{ maxWidth: 480, width: '100%', maxHeight: '90vh', overflowY: 'auto' }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+        <h3 style={{ margin: 0 }}>{title}</h3>
+        <button className="btn btn-sm btn-secondary" onClick={onClose} aria-label="Fechar">✕</button>
+      </div>
+      {children}
+    </div>
+  </div>
+);
