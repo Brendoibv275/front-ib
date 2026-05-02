@@ -91,3 +91,28 @@ export function getMonthBusinessUnitsFromYmd(ymd: string): number {
   }
   return units;
 }
+
+/**
+ * G — Formata duração em PT-BR compacto (ex: "2d 4h", "35min", "1h 12min").
+ * - >= 1 dia: "Xd Yh" (omite Y se 0)
+ * - >= 1 hora: "Xh Ymin" (omite Y se 0)
+ * - >= 1 min: "Xmin"
+ * - < 1 min: "agora"
+ * Aceita timedelta em segundos (número) — null/undefined/negativo retornam "—".
+ */
+export function formatDurationPtBr(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) return '—';
+  if (seconds < 0) return '—';
+  if (seconds < 60) return 'agora';
+  const totalMinutes = Math.floor(seconds / 60);
+  const days = Math.floor(totalMinutes / (60 * 24));
+  const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) {
+    return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  }
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}h ${minutes}min` : `${hours}h`;
+  }
+  return `${minutes}min`;
+}
