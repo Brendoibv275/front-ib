@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { CalendarCheck, Clock, CheckCircle, XCircle, User } from 'lucide-react';
+import { AddressCell } from '../components/AddressCell';
 
 interface AppointmentRow {
   id: string; lead_id: string; window_label: string; status: string;
@@ -102,7 +103,9 @@ export const AppointmentsPanel = () => {
                   </td>
                   <td style={{ fontWeight: 600 }}>{a.window_label}</td>
                   <td>{a.lead?.service_type || '—'}</td>
-                  <td style={{ fontSize: '0.82rem' }}>{a.lead?.address || '—'}</td>
+                  <td style={{ fontSize: '0.82rem' }}>
+                    <AddressCell address={a.lead?.address} />
+                  </td>
                   <td>
                     <span className={`tag ${a.status === 'proposed' ? 'tag-scheduled' : a.status === 'confirmed' ? 'tag-qualified' : a.status === 'completed' ? 'tag-completed' : 'tag-lost'}`}>
                       {a.status}

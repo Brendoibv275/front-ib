@@ -25,6 +25,15 @@ interface SelectedServiceItem {
   key: string;
   service_id: string;
   amount: string;
+  custom_description?: string; // "serviço realizado" em texto livre (pedido Kauan v2)
+}
+interface LeadOption {
+  id: string;
+  display_name: string;
+  phone: string;
+  service_type: string | null;
+  address: string | null;
+  stage: string;
 }
 type ExpenseRecurrence = 'one_time' | 'daily' | 'weekly' | 'monthly' | 'annual' | 'specific_date';
 type MainTab = 'new' | 'list';
@@ -59,6 +68,9 @@ export const FinanceInput = () => {
   const [overtimeRate, setOvertimeRate] = useState('');
   const [expenseRecurrence, setExpenseRecurrence] = useState<ExpenseRecurrence>('one_time');
   const [specificDueDate, setSpecificDueDate] = useState('');
+  const [leadId, setLeadId] = useState<string>(''); // vincular lançamento a um lead (pedido Kauan v2)
+  const [leads, setLeads] = useState<LeadOption[]>([]);
+  const [leadSearch, setLeadSearch] = useState('');
   const [settingsContext, setSettingsContext] = useState<SettingsContext>({
     app: DEFAULT_APP_SETTINGS,
     teamCostMap: {},
@@ -77,8 +89,21 @@ export const FinanceInput = () => {
     fetchTeam();
     fetchTeams();
     fetchServices();
+    fetchLeads();
     loadSettingsContext(supabase).then(setSettingsContext);
   }, []);
+
+  const fetchLeads = async () => {
+    // Apenas leads relevantes (qualificados, com orçamento, agendados ou fechados)
+    // pra dropdown não virar soup. Evita puxar leads "new" sem interação.
+    const { data } = await supabase
+      .from('leads')
+      .select('id, display_name, phone, service_type, address, stage')
+      .in('stage', ['qualified', 'quoted', 'scheduled', 'completed'])
+      .order('last_inbound_at', { ascending: false, nullsFirst: false })
+      .limit(300);
+    if (data) setLeads(data as LeadOption[]);
+  };
 
   useEffect(() => {
     if (editingId || entryType !== 'expense') return;
@@ -290,9 +315,10 @@ export const FinanceInput = () => {
         service,
         amountPart,
         commission,
+        custom_description: (row.custom_description || '').trim(),
       };
     })
-    .filter((row): row is { service: ServiceItem; amountPart: number; commission: number } => Boolean(row));
+    .filter((row): row is { service: ServiceItem; amountPart: number; commission: number; custom_description: string } => Boolean(row));
   const totalServicesAmount = selectedServiceRows.reduce((sum, row) => sum + row.amountPart, 0);
   const computedServiceCommission = selectedServiceRows.reduce((sum, row) => sum + row.commission, 0);
   const computedNight = Number(nightHours || 0) * Number(nightRate || 0);
@@ -401,12 +427,15 @@ export const FinanceInput = () => {
     setOvertimeRate('');
     setExpenseRecurrence('one_time');
     setSpecificDueDate('');
+    setLeadId('');
+    setLeadSearch('');
   };
 
   const loadEntryForEdit = (row: any) => {
     setMainTab('new');
     setEditingId(row.id);
     setEntryType(row.entry_type);
+    setLeadId(row.lead_id || '');
     setCategory(row.category || (row.entry_type === 'income' ? 'service_revenue' : 'material_cost'));
     setAmount(String(row.amount ?? ''));
     setDescription(row.description || '');
@@ -424,6 +453,7 @@ export const FinanceInput = () => {
         key: crypto.randomUUID(),
         service_id: typeof item?.service_id === 'string' ? item.service_id : '',
         amount: item?.amount != null ? String(item.amount) : '',
+        custom_description: typeof item?.custom_description === 'string' ? item.custom_description : '',
       }));
       setServiceSelections(normalized);
     } else if (md.service_id) {
@@ -469,11 +499,22 @@ export const FinanceInput = () => {
     const member = teamMemberId ? teamById[teamMemberId] : null;
     const normalizedMovementDate = parseMovementDate(movementDate);
     const payloadTeamId = member?.team_id || teamId || null;
+    const customDescs = selectedServiceRows
+      .map(r => r.custom_description)
+      .filter(Boolean);
+    // Se user não escreveu descrição geral mas preencheu custom em 1+ serviço,
+    // compõe uma descrição a partir das linhas pra ficar visível na listagem.
+    const effectiveDescription = description && description.trim()
+      ? description
+      : customDescs.length > 0
+        ? customDescs.join(' · ')
+        : null;
+
     const insertData: any = {
       entry_type: entryType,
       category,
       amount: parseFloat(amount),
-      description: description || null,
+      description: effectiveDescription,
       status: includeDebt ? 'pending' : 'paid',
       metadata: {} as Record<string, unknown>,
     };
@@ -481,6 +522,7 @@ export const FinanceInput = () => {
     insertData.team_id = payloadTeamId;
     insertData.team_member_id = teamMemberId || null;
     insertData.tax_fee = taxFee ? parseFloat(taxFee) : 0;
+    insertData.lead_id = leadId || null; // vincula a lead (opcional)
 
     if (entryType === 'income' && selectedServiceRows.length > 0) {
       const serviceMetadata = selectedServiceRows.map((row) => ({
@@ -490,6 +532,7 @@ export const FinanceInput = () => {
         commission_type: row.service.commission_type,
         commission_value: row.service.commission_value,
         commission_amount: Number(row.commission.toFixed(2)),
+        custom_description: row.custom_description || null,
       }));
       const primaryService = selectedServiceRows[0];
       insertData.metadata = {
@@ -741,6 +784,52 @@ export const FinanceInput = () => {
 
                 {entryType === 'income' && (
                   <div className="card" style={{ padding: '1rem' }}>
+                    <h4 style={{ marginBottom: '0.75rem' }}>Lead (opcional — vincular esse lançamento a um cliente)</h4>
+                    <div className="form-group">
+                      <input
+                        type="text"
+                        placeholder="Buscar cliente por nome ou telefone…"
+                        value={leadSearch}
+                        onChange={e => setLeadSearch(e.target.value)}
+                        style={{ marginBottom: '0.5rem' }}
+                      />
+                      <select
+                        value={leadId}
+                        onChange={e => {
+                          setLeadId(e.target.value);
+                          const sel = leads.find(l => l.id === e.target.value);
+                          if (sel) setLeadSearch(sel.display_name);
+                        }}
+                      >
+                        <option value="">— Sem vínculo —</option>
+                        {leads
+                          .filter(l => {
+                            if (!leadSearch.trim()) return true;
+                            const q = leadSearch.toLowerCase();
+                            return (
+                              (l.display_name || '').toLowerCase().includes(q) ||
+                              (l.phone || '').toLowerCase().includes(q) ||
+                              (l.service_type || '').toLowerCase().includes(q)
+                            );
+                          })
+                          .slice(0, 100)
+                          .map(l => (
+                            <option key={l.id} value={l.id}>
+                              {l.display_name || '(sem nome)'} · {l.phone || '—'} · {l.service_type || 'sem serviço'} · [{l.stage}]
+                            </option>
+                          ))}
+                      </select>
+                      {leadId && (
+                        <p style={{ marginTop: '0.35rem', fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
+                          Esse lançamento vai aparecer no histórico desse cliente. Para desvincular, escolha "— Sem vínculo —".
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {entryType === 'income' && (
+                  <div className="card" style={{ padding: '1rem' }}>
                     <h4 style={{ marginBottom: '0.75rem' }}>Serviços do catálogo (múltiplos)</h4>
                     {serviceSelections.map((row) => (
                       <div key={row.key} className="form-grid" style={{ alignItems: 'end', marginBottom: '0.5rem' }}>
@@ -769,6 +858,17 @@ export const FinanceInput = () => {
                             value={row.amount}
                             onChange={e =>
                               setServiceSelections(prev => prev.map(item => item.key === row.key ? { ...item, amount: e.target.value } : item))
+                            }
+                          />
+                        </div>
+                        <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                          <label>Serviço realizado (detalhe livre — opcional)</label>
+                          <input
+                            type="text"
+                            placeholder="Ex: Instalação 12.000 BTU + reforço elétrico"
+                            value={row.custom_description || ''}
+                            onChange={e =>
+                              setServiceSelections(prev => prev.map(item => item.key === row.key ? { ...item, custom_description: e.target.value } : item))
                             }
                           />
                         </div>
