@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { MessageSquare, CalendarCheck, Search, ChevronDown, ChevronUp, Phone } from 'lucide-react';
 import { AddressCell } from '../components/AddressCell';
+import { formatDurationPtBr } from '../lib/date';
 
 interface Lead {
   id: string; display_name: string; phone: string; external_user_id: string;
@@ -25,6 +26,11 @@ interface BotStatus {
   bot_reactivated_at?: string | null;
   bot_reactivated_by?: string | null;
   equipe_responsavel?: string | null;
+}
+interface StageInfo {
+  current_stage: string;
+  entered_at: string | null;
+  duration_seconds: number | null;
 }
 
 const stageLabel: Record<string, string> = {
@@ -50,6 +56,8 @@ export const LeadsPanel = () => {
   const [statusLoadingLeadId, setStatusLoadingLeadId] = useState<string | null>(null);
   const [botStatusMap, setBotStatusMap] = useState<Record<string, BotStatus>>({});
   const [botStatusErrorMap, setBotStatusErrorMap] = useState<Record<string, string>>({});
+  const [stageInfoMap, setStageInfoMap] = useState<Record<string, StageInfo>>({});
+  const [sortByStageDuration, setSortByStageDuration] = useState(false);
   const [fetchError, setFetchError] = useState<string>('');
 
   const backendBaseUrl = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/+$/, '');
@@ -72,6 +80,33 @@ export const LeadsPanel = () => {
     if (lRes.data) setLeads(lRes.data as Lead[]);
     if (aRes.data) setAppointments(aRes.data);
     setLoading(false);
+    // G — best-effort: busca stage-info por lead. Falhas são silenciosas (endpoint novo).
+    if (lRes.data && backendBaseUrl) {
+      fetchStageInfoBatch((lRes.data as Lead[]).map(l => l.id));
+    }
+  };
+
+  const fetchStageInfoBatch = async (leadIds: string[]) => {
+    // Paraleliza mas limita shape do state pra só setar quando chegar tudo (evita re-render por lead).
+    const results = await Promise.allSettled(
+      leadIds.map(async id => {
+        const resp = await fetch(`${backendBaseUrl}/leads/${id}/stage-info`);
+        if (!resp.ok) throw new Error('stage-info fail');
+        const data = (await resp.json()) as StageInfo & { lead_id: string };
+        return { id, data };
+      }),
+    );
+    const next: Record<string, StageInfo> = {};
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        next[r.value.id] = {
+          current_stage: r.value.data.current_stage,
+          entered_at: r.value.data.entered_at,
+          duration_seconds: r.value.data.duration_seconds,
+        };
+      }
+    }
+    setStageInfoMap(prev => ({ ...prev, ...next }));
   };
 
   const toggleExpand = async (leadId: string) => {
@@ -152,6 +187,15 @@ export const LeadsPanel = () => {
     return matchSearch && matchStage;
   });
 
+  // G — ordenar por tempo no estágio atual (desc) quando toggle estiver ativo.
+  const sortedFiltered = sortByStageDuration
+    ? [...filtered].sort((a, b) => {
+        const da = stageInfoMap[a.id]?.duration_seconds ?? -1;
+        const db = stageInfoMap[b.id]?.duration_seconds ?? -1;
+        return db - da;
+      })
+    : filtered;
+
   const leadAppts = (leadId: string) => appointments.filter(a => a.lead_id === leadId);
 
   // KPIs
@@ -191,6 +235,17 @@ export const LeadsPanel = () => {
               {Object.entries(stageLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
           </div>
+          <div className="form-group">
+            <label>Ordenação</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={sortByStageDuration}
+                onChange={e => setSortByStageDuration(e.target.checked)}
+              />
+              Mais tempo parado no estágio primeiro
+            </label>
+          </div>
         </div>
       </div>
 
@@ -199,7 +254,7 @@ export const LeadsPanel = () => {
         {fetchError && (
           <p style={{ color: 'var(--danger)', padding: '1rem 1rem 0' }}>{fetchError}</p>
         )}
-        {filtered.length === 0 ? (
+        {sortedFiltered.length === 0 ? (
           <p style={{ color: 'var(--text-secondary)', padding: '2rem', textAlign: 'center' }}>
             {loading ? 'Carregando...' : 'Nenhum lead encontrado.'}
           </p>
@@ -210,9 +265,11 @@ export const LeadsPanel = () => {
               <tr><th>Nome / WhatsApp</th><th>Serviço</th><th>Endereço</th><th>Equipe Responsável</th><th>Estágio</th><th>Orçamento</th><th>Data</th><th></th></tr>
             </thead>
             <tbody>
-              {filtered.map(lead => {
+              {sortedFiltered.map(lead => {
                 const leadStatus = getLeadBotStatus(lead);
                 const isPaused = Boolean(leadStatus.bot_paused);
+                const stageInfo = stageInfoMap[lead.id];
+                const stageLabelTxt = stageLabel[lead.stage] || lead.stage;
                 return (
                 <Fragment key={lead.id}>
                   <tr key={lead.id} style={{ cursor: 'pointer' }} onClick={() => toggleExpand(lead.id)}>
@@ -237,6 +294,14 @@ export const LeadsPanel = () => {
                       >
                         {Object.entries(stageLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                       </select>
+                      {stageInfo?.duration_seconds != null && (
+                        <div
+                          title={stageInfo.entered_at ? `Entrou em ${new Date(stageInfo.entered_at).toLocaleString('pt-BR')}` : undefined}
+                          style={{ fontSize: '0.7rem', color: 'var(--text-secondary)', marginTop: '2px' }}
+                        >
+                          Em '{stageLabelTxt}' há {formatDurationPtBr(stageInfo.duration_seconds)}
+                        </div>
+                      )}
                     </td>
                     <td style={{ fontWeight: 600 }} title="Valor estimado — pode ser ajustado pelo técnico no local">
                       {lead.quoted_amount
