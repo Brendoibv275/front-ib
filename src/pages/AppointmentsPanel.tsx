@@ -8,6 +8,7 @@ interface AppointmentRow {
   notes: string; calendar_event_id: string; created_at: string;
   scheduled_date?: string | null;
   slot?: string | null;
+  custom_time?: string | null;
   lead?: { display_name: string; phone: string; address: string; service_type: string; };
 }
 
@@ -52,6 +53,26 @@ export const AppointmentsPanel = () => {
   const [reallocSlot, setReallocSlot] = useState<SlotKey>('morning_early');
   const [cancelTarget, setCancelTarget] = useState<AppointmentRow | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+
+  // J — Novo agendamento manual (cliente legado)
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualLoading, setManualLoading] = useState(false);
+  const [manualForm, setManualForm] = useState({
+    display_name: '',
+    phone: '',
+    address: '',
+    service_type: 'instalacao',
+    btus: '',
+    floor_level: '',
+    quoted_amount: '',
+    lead_notes: '',
+    scheduled_date: '',
+    slot: 'morning_early' as SlotKey | '',
+    use_custom_time: false,
+    custom_time: '',
+    team_id: '',
+    appt_notes: '',
+  });
 
   const backendBaseUrl = (import.meta.env.VITE_BACKEND_URL || '').replace(/\/+$/, '');
 
@@ -188,6 +209,92 @@ export const AppointmentsPanel = () => {
     }
   };
 
+  // --- J: Novo agendamento manual ---
+  const openManual = () => {
+    // data sugerida: hoje
+    const today = new Date().toISOString().slice(0, 10);
+    setManualForm({
+      display_name: '',
+      phone: '',
+      address: '',
+      service_type: 'instalacao',
+      btus: '',
+      floor_level: '',
+      quoted_amount: '',
+      lead_notes: '',
+      scheduled_date: today,
+      slot: 'morning_early',
+      use_custom_time: false,
+      custom_time: '',
+      team_id: '',
+      appt_notes: '',
+    });
+    setManualOpen(true);
+  };
+
+  const submitManual = async () => {
+    if (!backendBaseUrl) {
+      setFeedback({ kind: 'error', message: 'VITE_BACKEND_URL não configurado.' });
+      return;
+    }
+    const name = manualForm.display_name.trim();
+    if (!name) {
+      setFeedback({ kind: 'error', message: 'Nome do cliente é obrigatório.' });
+      return;
+    }
+    if (!manualForm.scheduled_date) {
+      setFeedback({ kind: 'error', message: 'Escolha a data do agendamento.' });
+      return;
+    }
+    if (manualForm.use_custom_time && !manualForm.custom_time.trim()) {
+      setFeedback({ kind: 'error', message: 'Informe o horário livre (ex.: 11:30) ou desmarque a opção.' });
+      return;
+    }
+    const body: Record<string, unknown> = {
+      lead: {
+        display_name: name,
+        phone: manualForm.phone.trim() || undefined,
+        address: manualForm.address.trim() || undefined,
+        service_type: manualForm.service_type || undefined,
+        btus: manualForm.btus ? Number(manualForm.btus) : undefined,
+        floor_level: manualForm.floor_level ? Number(manualForm.floor_level) : undefined,
+        quoted_amount: manualForm.quoted_amount ? Number(manualForm.quoted_amount) : undefined,
+        notes: manualForm.lead_notes.trim() || undefined,
+      },
+      appointment: {
+        scheduled_date: manualForm.scheduled_date,
+        slot: manualForm.use_custom_time ? undefined : (manualForm.slot || undefined),
+        custom_time: manualForm.use_custom_time ? manualForm.custom_time.trim() : undefined,
+        team_id: manualForm.team_id || undefined,
+        notes: manualForm.appt_notes.trim() || undefined,
+      },
+    };
+    setManualLoading(true);
+    try {
+      const response = await fetch(`${backendBaseUrl}/appointments/manual`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        let detail = `HTTP ${response.status}`;
+        try {
+          const j = await response.json();
+          if (j?.detail) detail = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+        } catch { /* ignore */ }
+        throw new Error(detail);
+      }
+      setFeedback({ kind: 'success', message: 'Agendamento manual criado com sucesso.' });
+      setManualOpen(false);
+      await fetchAppointments();
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Falha ao criar agendamento manual.';
+      setFeedback({ kind: 'error', message: `Erro ao criar: ${msg}` });
+    } finally {
+      setManualLoading(false);
+    }
+  };
+
   const filtered = useMemo(
     () => (filter === 'all' ? appointments : appointments.filter(a => a.status === filter)),
     [appointments, filter],
@@ -203,6 +310,12 @@ export const AppointmentsPanel = () => {
       <div className="page-header">
         <h2>Agendamentos & Visitas Técnicas</h2>
         <p>Gerencie visitas agendadas pelo Agente IA para a equipe técnica</p>
+      </div>
+
+      <div style={{ marginBottom: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
+        <button className="btn btn-primary" onClick={openManual}>
+          + Novo agendamento manual
+        </button>
       </div>
 
       {feedback && (
@@ -284,7 +397,7 @@ export const AppointmentsPanel = () => {
                     </td>
                     <td style={{ fontSize: '0.82rem' }}>
                       {a.scheduled_date
-                        ? `${new Date(a.scheduled_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}${a.slot ? ' · ' + (SLOT_SHORT[a.slot] || a.slot) : ''}`
+                        ? `${new Date(a.scheduled_date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}${a.slot ? ' · ' + (SLOT_SHORT[a.slot] || a.slot) : (a.custom_time ? ' · ' + a.custom_time : '')}`
                         : '—'}
                     </td>
                     <td style={{ fontWeight: 600 }}>{a.window_label}</td>
@@ -416,6 +529,174 @@ export const AppointmentsPanel = () => {
             </button>
             <button className="btn btn-danger" onClick={submitCancel} disabled={actionLoadingId === cancelTarget.id}>
               {actionLoadingId === cancelTarget.id ? 'Cancelando...' : 'Confirmar cancelamento'}
+            </button>
+          </div>
+        </ModalShell>
+      )}
+
+      {/* Modal Novo Agendamento Manual (J) */}
+      {manualOpen && (
+        <ModalShell title="Novo agendamento manual" onClose={() => !manualLoading && setManualOpen(false)}>
+          <p style={{ marginBottom: '0.75rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+            Cadastro de cliente legado (pré-sistema). O agente IA NÃO vai mandar mensagem pra esse lead.
+          </p>
+
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', margin: '0.5rem 0 0.3rem', textTransform: 'uppercase' }}>
+            Cliente
+          </div>
+
+          <label style={labelStyle}>Nome *</label>
+          <input
+            type="text" className="input" style={inputStyle}
+            value={manualForm.display_name}
+            onChange={e => setManualForm(f => ({ ...f, display_name: e.target.value }))}
+            placeholder="Nome do cliente"
+          />
+
+          <label style={{ ...labelStyle, marginTop: '0.6rem' }}>Telefone</label>
+          <input
+            type="tel" className="input" style={inputStyle}
+            value={manualForm.phone}
+            onChange={e => setManualForm(f => ({ ...f, phone: e.target.value }))}
+            placeholder="+5598999999999"
+          />
+
+          <label style={{ ...labelStyle, marginTop: '0.6rem' }}>Endereço</label>
+          <input
+            type="text" className="input" style={inputStyle}
+            value={manualForm.address}
+            onChange={e => setManualForm(f => ({ ...f, address: e.target.value }))}
+            placeholder="Rua, número, bairro"
+          />
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.6rem' }}>
+            <div>
+              <label style={labelStyle}>Serviço</label>
+              <select
+                className="input" style={inputStyle}
+                value={manualForm.service_type}
+                onChange={e => setManualForm(f => ({ ...f, service_type: e.target.value }))}
+              >
+                <option value="instalacao">Instalação</option>
+                <option value="manutencao">Manutenção</option>
+                <option value="limpeza">Limpeza</option>
+                <option value="desinstalacao">Desinstalação</option>
+                <option value="orcamento">Orçamento</option>
+                <option value="outro">Outro</option>
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>BTUs</label>
+              <input
+                type="number" className="input" style={inputStyle}
+                value={manualForm.btus}
+                onChange={e => setManualForm(f => ({ ...f, btus: e.target.value }))}
+                placeholder="12000"
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.6rem' }}>
+            <div>
+              <label style={labelStyle}>Andar</label>
+              <input
+                type="number" className="input" style={inputStyle}
+                value={manualForm.floor_level}
+                onChange={e => setManualForm(f => ({ ...f, floor_level: e.target.value }))}
+                placeholder="2"
+              />
+            </div>
+            <div>
+              <label style={labelStyle}>Valor (R$)</label>
+              <input
+                type="number" step="0.01" className="input" style={inputStyle}
+                value={manualForm.quoted_amount}
+                onChange={e => setManualForm(f => ({ ...f, quoted_amount: e.target.value }))}
+                placeholder="450.00"
+              />
+            </div>
+          </div>
+
+          <label style={{ ...labelStyle, marginTop: '0.6rem' }}>Observação do cliente</label>
+          <input
+            type="text" className="input" style={inputStyle}
+            value={manualForm.lead_notes}
+            onChange={e => setManualForm(f => ({ ...f, lead_notes: e.target.value }))}
+            placeholder="Ex.: Cliente recorrente desde 2024"
+          />
+
+          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', margin: '1rem 0 0.3rem', textTransform: 'uppercase' }}>
+            Agendamento
+          </div>
+
+          <label style={labelStyle}>Data *</label>
+          <input
+            type="date" className="input" style={inputStyle}
+            value={manualForm.scheduled_date}
+            onChange={e => setManualForm(f => ({ ...f, scheduled_date: e.target.value }))}
+          />
+
+          <div style={{ marginTop: '0.6rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={manualForm.use_custom_time}
+                onChange={e => setManualForm(f => ({ ...f, use_custom_time: e.target.checked }))}
+              />
+              <span style={{ fontSize: '0.85rem' }}>Horário livre (fora dos 4 slots padrão)</span>
+            </label>
+          </div>
+
+          {manualForm.use_custom_time ? (
+            <>
+              <label style={{ ...labelStyle, marginTop: '0.5rem' }}>Horário (ex.: 11:30)</label>
+              <input
+                type="time" className="input" style={inputStyle}
+                value={manualForm.custom_time}
+                onChange={e => setManualForm(f => ({ ...f, custom_time: e.target.value }))}
+              />
+            </>
+          ) : (
+            <>
+              <label style={{ ...labelStyle, marginTop: '0.5rem' }}>Slot</label>
+              <select
+                className="input" style={inputStyle}
+                value={manualForm.slot}
+                onChange={e => setManualForm(f => ({ ...f, slot: e.target.value as SlotKey }))}
+              >
+                {(Object.keys(SLOT_LABELS) as SlotKey[]).map(k => (
+                  <option key={k} value={k}>{SLOT_LABELS[k]}</option>
+                ))}
+              </select>
+            </>
+          )}
+
+          <label style={{ ...labelStyle, marginTop: '0.6rem' }}>Equipe (opcional — confirmar depois)</label>
+          <select
+            className="input" style={inputStyle}
+            value={manualForm.team_id}
+            onChange={e => setManualForm(f => ({ ...f, team_id: e.target.value }))}
+          >
+            <option value="">— Sem atribuir (decidir depois) —</option>
+            {teams.map(t => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+
+          <label style={{ ...labelStyle, marginTop: '0.6rem' }}>Observações do agendamento</label>
+          <input
+            type="text" className="input" style={inputStyle}
+            value={manualForm.appt_notes}
+            onChange={e => setManualForm(f => ({ ...f, appt_notes: e.target.value }))}
+            placeholder="Ex.: Visita remarcada, cliente pediu manhã"
+          />
+
+          <div style={modalActions}>
+            <button className="btn btn-secondary" onClick={() => setManualOpen(false)} disabled={manualLoading}>
+              Cancelar
+            </button>
+            <button className="btn btn-primary" onClick={submitManual} disabled={manualLoading}>
+              {manualLoading ? 'Criando...' : 'Criar agendamento'}
             </button>
           </div>
         </ModalShell>
